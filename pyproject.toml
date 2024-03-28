@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "spellpy"
 version = "0.1.0"
-description = "Python code created by John Stout in Spellman lab @UConn"
+description = "Python package for Tim Spellman lab"
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 
@@ -11,6 +11,8 @@ suite2p = "0.14.2"
 openpyxl = "3.1.2"
 pynwb  = "2.5.0"
 pynapple = "0.4.0"
+tensortools = "0.4.0"
+h5py = "3.10.0"
 
 
 [build-system]
