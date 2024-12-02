@@ -47,6 +47,7 @@ except:
     pass
 
 # rois
+'''
 def com(A: np.ndarray, d1: int, d2: int, d3: Optional[int] = None) -> np.array:
     """Calculation of the center of mass for spatial components
 
@@ -71,23 +72,21 @@ def com(A: np.ndarray, d1: int, d2: int, d3: Optional[int] = None) -> np.array:
     if 'csc_matrix' not in str(type(A)):
         A = scipy.sparse.csc_matrix(A)
 
-    if d3 is None:
-        Coor = np.matrix([np.outer(np.ones(d2), np.arange(d1)).ravel(),
-                          np.outer(np.arange(d2), np.ones(d1)).ravel()],
-                         dtype=A.dtype)
-    else:
-        Coor = np.matrix([
-            np.outer(np.ones(d3),
-                     np.outer(np.ones(d2), np.arange(d1)).ravel()).ravel(),
-            np.outer(np.ones(d3),
-                     np.outer(np.arange(d2), np.ones(d1)).ravel()).ravel(),
-            np.outer(np.arange(d3),
-                     np.outer(np.ones(d2), np.ones(d1)).ravel()).ravel()
-        ],
-                         dtype=A.dtype)
+    #Coor = np.matrix([np.outer(np.ones(d2), np.arange(d1)).ravel(),
+    #                    np.outer(np.arange(d2), np.ones(d1)).ravel()],
+    #                    dtype=A.dtype)
+    
+    # John Stout edited this as this provides a nearly spot-on comparison to stat[0]['med']
+    # the only difference is that the cm array is flipped
+    Coor = np.matrix([np.outer(np.ones(d1), np.arange(d2)).ravel(),
+                        np.outer(np.arange(d1), np.ones(d2)).ravel()],
+                        dtype=A.dtype)
 
-    cm = (Coor * A / A.sum(axis=0)).T
+    # this now corrects for s2p approach
+    cm = np.fliplr((Coor * A / A.sum(axis=0)).T)
+    #cm = (Coor * A / A.sum(axis=0)).T
     return np.array(cm)
+'''
 
 def extract_binary_masks_from_structural_channel(Y,
                                                  min_area_size: int = 30,
@@ -329,6 +328,7 @@ def nf_match_neurons_in_binary_masks(masks_gt,
 def register_ROIs(A1,
                   A2,
                   dims,
+                  coms,
                   template1=None,
                   template2=None,
                   align_flag=True,
@@ -354,6 +354,8 @@ def register_ROIs(A1,
 
         dims: list or tuple
             dimensionality of the FOV
+
+        coms: suite2p center of mass as np.array
 
         template1: ndarray dims
             template from session 1
@@ -429,6 +431,9 @@ def register_ROIs(A1,
     if template1 is None or template2 is None:
         align_flag = False
 
+    #dims = tuple(np.flipud(dims))
+
+    #x_grid, y_grid = np.meshgrid(np.arange(0., dims[1]).astype(np.float32), np.arange(0., dims[0]).astype(np.float32))
     x_grid, y_grid = np.meshgrid(np.arange(0., dims[1]).astype(np.float32), np.arange(0., dims[0]).astype(np.float32))
 
     if align_flag:     # first align ROIs from session 2 to the template from session 1
@@ -444,9 +449,11 @@ def register_ROIs(A1,
         x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
         y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
 
-        A_2t = np.reshape(A2, dims + (-1,), order='F').transpose(2, 0, 1)
+        # this is wrong for suite2p - it had to be changed from order='F' to order='C'
+        A_2t = np.reshape(A2, dims + (-1,), order='C').transpose(2, 0, 1)
+
         A2 = np.stack([cv2.remap(img.astype(np.float32), x_remap, y_remap, cv2.INTER_NEAREST) for img in A_2t], axis=0)
-        A2 = np.reshape(A2.transpose(1, 2, 0), (A1.shape[0], A_2t.shape[0]), order='F')
+        A2 = np.reshape(A2.transpose(1, 2, 0), (A1.shape[0], A_2t.shape[0]), order='C')
 
     A1 = np.stack([a * (a > max_thr * a.max()) for a in A1.T]).T
     A2 = np.stack([a * (a > max_thr * a.max()) for a in A2.T]).T
@@ -457,8 +464,12 @@ def register_ROIs(A1,
         if 'csc_matrix' not in str(type(A2)):
             A2 = scipy.sparse.csc_matrix(A2)
 
-        cm_1 = com(A1, *dims)
-        cm_2 = com(A2, *dims)
+        #cm_1 = com(A1, *dims)
+        #cm_2 = com(A2, *dims)
+
+        cm_1 = coms[0]
+        cm_2 = coms[1]
+
         A1_tr = (A1 > 0).astype(float)
         A2_tr = (A2 > 0).astype(float)
         D = distance_masks([A1_tr, A2_tr], [cm_1, cm_2], max_dist, enclosed_thr=enclosed_thr)
@@ -537,6 +548,7 @@ def register_ROIs(A1,
 
 def register_multisession(A,
                           dims,
+                          coms,
                           templates=[None],
                           align_flag=True,
                           max_thr=0,
@@ -544,6 +556,13 @@ def register_multisession(A,
                           max_dist=10,
                           enclosed_thr=None):
     """
+    John hacked to make sure this works with suite2p and specifically to compare ordered sessions.
+    In otherwords, do not enter sessions out of order. This code will search for ROI present in session 1,
+    to that in session 2, to session 3, to session 4. It will not compare session 2 to session 4. 
+
+    If an ROI in session 1 is found in session 2 and session 4, it is the same ROI and code in 
+    `ciaman_multisession_registration` filters for this.
+
     Register ROIs across multiple sessions using an intersection over union metric
     and the Hungarian algorithm for optimal matching. Registration occurs by 
     aligning session 1 to session 2, keeping the union of the matched and 
@@ -602,31 +621,88 @@ def register_multisession(A,
 
     A = [a.toarray() if 'ndarray' not in str(type(a)) else a for a in A]
 
-    A_union = A[0].copy()
+    A_union   = A[0].copy()
+    com_union = coms[0].copy()
+    template_union = templates[0].copy()
     matchings = []
     matchings.append(list(range(A_union.shape[-1])))
 
     for sess in range(1, n_sessions):
-        reg_results = register_ROIs(A[sess],
-                                    A_union,
-                                    dims,
+
+        # you have to orient your coms such that sess N is prior to the comparator com
+        coms_data = []; coms_data.append(coms[sess]); coms_data.append(com_union)
+
+        # check that our coms and A.shapes align
+        #assert coms_data[1].shape[0] == A_union.shape[1], "COM and actual data are not aligned"
+        #assert coms_data[0].shape[0] == A[sess].shape[1], "COM and actual data are not aligned"
+
+        reg_results = register_ROIs(A1=A[sess],
+                                    A2=A_union,
+                                    dims=dims,
+                                    coms=coms_data,
                                     template1=templates[sess],
-                                    template2=templates[sess - 1],
+                                    template2=templates[sess-1], #templates[sess - 1],
                                     align_flag=align_flag,
                                     max_thr=max_thr,
                                     thresh_cost=thresh_cost,
                                     max_dist=max_dist,
                                     enclosed_thr=enclosed_thr)
 
+        # A2       = rois aligned in session 2 with those in session 1
+        # mat_sess = indices of matched ROIs from session 1
+        # mat_un   = indices of matched ROIs from session 2 
+        # nm_un    = indices of non_matched rois from session 1
+        '''
+        matched_ROIs1: list (1 to 1 i think)
+            indices of matched ROIs from A1
+
+        matched_ROIs2: list (2 to 1 i think)
+            indices of matched ROIs from session A2
+
+        non_matched1: list
+            indices of non-matched ROIs from session 1
+
+        non_matched2: list
+            indices of non-matched ROIs from session 2
+
+        performance:  list
+            (precision, recall, accuracy, f_1 score) with A1 taken as ground truth
+
+        # THIS IS INCORRECT DOCUMENTATION ***
+        A2: csc_matrix  # pixels x # of components
+            ROIs from session 2 aligned to session 1
+        '''
+
+        # mat_sess are the indices of your ROIs matching, found in A1
+        # mat_un are the indices of your matching ROIs, found in A2.
+        # mat_sess == mat_un, but in different sessions
         mat_sess, mat_un, nm_sess, nm_un, _, A2 = reg_results
         logging.info(len(mat_sess))
-        A_union = A2.copy()
-        A_union[:, mat_un] = A[sess][:, mat_sess]
-        A_union = np.concatenate((A_union.toarray(), A[sess][:, nm_sess]), axis=1)
-        new_match = np.zeros(A[sess].shape[-1], dtype=int)
-        new_match[mat_sess] = mat_un
+
+        # so you set A_union = a sparse copy of itself????
+        A_union = A2.copy() # THIS IS LITERALLY THE SAME THING IS A2 INPUTS EXCEPT RE-ALIGNED
+
+        # For session 1 data, take session 2 data thta share identical ROI and redfine session 1
+        #A_union = A_union.toarray(); 
+        #A_union_resh=np.reshape(A_union,(dims[0],dims[1],132))
+        #A_resh=np.reshape(A[sess],(dims[0],dims[1],A[sess].shape[1]))
+
+        # mat_sess=A1 and A[sess] = A1. You are redefining the pixel values of A_union, which is derived from A2, as those found in matching components
+        A_union[:, mat_un] = A[sess][:, mat_sess] # assign indices of matched ROIs from session 2 as values in session 1
+        
+        # why are we adding to the array?
+        A_union = np.concatenate((A_union.toarray(), A[sess][:, nm_sess]), axis=1) # we are adding to the end, the non-matched components
+        
+        new_match = np.zeros(A[sess].shape[-1], dtype=int) # initialize
+        new_match[mat_sess] = mat_un # matched ROIs
         new_match[nm_sess] = range(A2.shape[-1], A_union.shape[-1])
         matchings.append(new_match.tolist())
+
+        # add to com_union
+        # TODO: WE need to update the coms variable to reflect the changing A_union variable
+        com_union[mat_un] = coms_data[0][mat_sess]
+        com_union = np.vstack((list(com_union),list(coms_data[0][mat_sess])))
+        #com_union = np.concatenate(com_union, coms_data[0][mat_sess])
 
     assignments = np.empty((A_union.shape[-1], n_sessions)) * np.nan
     for sess in range(n_sessions):
@@ -708,6 +784,10 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
     D_s = []
 
     for gt_comp, test_comp, cmgt_comp, cmtest_comp in zip(M_s[:-1], M_s[1:], cm_s[:-1], cm_s[1:]):
+
+        # such a bizarre coding scheme here.
+        # gt_comp and test_comp represent A1_tr and A2_tr, respectively
+        # cmgt_comp and cmtest_comp represent cm_1 and cm_2 center of masses, respectively
 
         # todo : better with a function that calls itself
         # not to interfere with M_s
@@ -1373,7 +1453,7 @@ def detect_duplicates(file_name:str, dist_thr:float = 0.1, FOV:tuple[int, ...] =
 
 
 # -- This code below was taken from visualization -- #
-def get_contours(A, dims, thr=0.9, thr_method='nrg', swap_dim=False):
+def get_contours(A, dims, com, thr=0.9, thr_method='nrg', swap_dim=False):
     """Gets contour of spatial components and returns their coordinates
 
      Args:
@@ -1382,6 +1462,8 @@ def get_contours(A, dims, thr=0.9, thr_method='nrg', swap_dim=False):
 
              dims: tuple of ints
                    Spatial dimensions of movie (x, y[, z])
+
+             com: center of mass as obtained using suite2p stat[0]['med']
 
              thr: scalar between 0 and 1
                    Energy threshold for computing contours (default 0.9)
@@ -1410,7 +1492,7 @@ def get_contours(A, dims, thr=0.9, thr_method='nrg', swap_dim=False):
     coordinates = []
 
     # get the center of mass of neurons( patches )
-    cm = com(A, *dims)
+    cm = com #com(A, *dims)
 
     # for each patches
     for i in range(nr):
@@ -1470,7 +1552,7 @@ def get_contours(A, dims, thr=0.9, thr_method='nrg', swap_dim=False):
         coordinates.append(pars)
     return coordinates
 
-def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, display_numbers=True, max_number=None,
+def plot_contours(A, Cn, com, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, display_numbers=True, max_number=None,
                   cmap=None, swap_dim=False, colors='w', vmin=None, vmax=None, coordinates=None,
                   contour_args={}, number_args={}, **kwargs):
     """Plots contour of spatial components against a background image and returns their coordinates
@@ -1481,6 +1563,8 @@ def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, dis
     
          Cn:  np.ndarray (2D)
                    Background image (e.g. mean, correlation)
+        
+         com: center of mass as np.array obtained from suite2p stat output
     
          thr_method: [optional] string
                   Method of thresholding:
@@ -1528,6 +1612,7 @@ def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, dis
             color = kwargs[key]
             kwargs.pop(key)
 
+    fig = pl.figure()
     ax = pl.gca()
     if vmax is None and vmin is None:
         pl.imshow(Cn, interpolation=None, cmap=cmap,
@@ -1537,7 +1622,7 @@ def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, dis
         pl.imshow(Cn, interpolation=None, cmap=cmap, vmin=vmin, vmax=vmax)
 
     if coordinates is None:
-        coordinates = get_contours(A, np.shape(Cn), thr, thr_method, swap_dim)
+        coordinates = get_contours(A, np.shape(Cn), com, thr, thr_method, swap_dim)
     for c in coordinates:
         v = c['coordinates']
         c['bbox'] = [np.floor(np.nanmin(v[:, 1])), np.ceil(np.nanmax(v[:, 1])),
@@ -1547,7 +1632,8 @@ def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, dis
     if display_numbers:
         d1, d2 = np.shape(Cn)
         d, nr = np.shape(A)
-        cm = com(A, d1, d2)
+        #cm = com(A, d1, d2)
+        cm = com
         if max_number is None:
             max_number = A.shape[1]
         for i in range(np.minimum(nr, max_number)):
@@ -1555,7 +1641,7 @@ def plot_contours(A, Cn, thr=None, thr_method='max', maxthr=0.2, nrgthr=0.9, dis
                 ax.text(cm[i, 0], cm[i, 1], str(i + 1), color=colors, **number_args)
             else:
                 ax.text(cm[i, 1], cm[i, 0], str(i + 1), color=colors, **number_args)
-    return coordinates
+    return coordinates, fig
 
 def plot_shapes(Ab, dims, num_comps=15, size=(15, 15), comps_per_row=None,
                 cmap='viridis', smoother=lambda s: median_filter(s, 3)):

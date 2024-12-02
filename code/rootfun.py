@@ -24,3 +24,57 @@ def addcode_paths(code_root: str):
 def create_path(fname):
     if os.path.isdir(fname)==False:
         os.mkdir(fname)
+
+def list_all_subdirs(phile_name):
+    '''
+    Recursive method to list all subdirectories. 
+
+    Written by Alex M and converted to Python from MATLAB via copilot
+    
+    '''
+
+    # Initialize the list
+    dir_paths = []
+
+    # Start by listing all subdirectories of the main folder
+    subdirs = [d for d in os.scandir(phile_name) if d.is_dir()]
+
+    # Loop through each subdirectory found
+    for subdir in subdirs:
+        # Get the full path of the subdirectory
+        sub_dir_path = os.path.join(phile_name, subdir.name)
+
+        # Weed out any empty directories
+        if len(os.listdir(sub_dir_path)) > 0:
+            # Add this subdirectory path to the list
+            dir_paths.append(sub_dir_path)
+
+            # Recursively call this function to get sub-subdirectories
+            sub_folder_paths = list_all_subdirs(sub_dir_path)
+
+            # Append any found sub-subdirectories to the list
+            dir_paths.extend(sub_folder_paths)
+
+    return dir_paths
+
+def is_folder_busy(folder_path):
+
+    '''
+    Copilot wrote this to test if a folder is busy
+    
+    '''
+    try:
+        # Try to create a temporary file in the folder
+        temp_file_path = os.path.join(folder_path, 'temp_file')
+        with open(temp_file_path, 'w') as temp_file:
+            temp_file.write('Test')
+        
+        # Try to remove the temporary file
+        os.remove(temp_file_path)
+        
+        # If no exception was raised, the folder is not busy
+        return False
+    except (OSError, IOError):
+        # If an exception was raised, the folder is busy
+        return
+

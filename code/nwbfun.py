@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 import pynapple as nap
+import xmltodict
 
 import numpy as np
 import scipy
@@ -40,6 +41,15 @@ try:
     NWB = True
 except ModuleNotFoundError:
     NWB = False
+
+class convert_nwb():
+    """
+    This is going to take the files and file types generated in Spellman lab formats and convert
+
+    
+    
+    """
+    pass
 
 # a class designed to interact with suite2p formats
 class suite2p_nwb():
@@ -194,7 +204,7 @@ class suite2p_nwb():
                 ops["xrange"] = [0, LX]
         return stat, ops, F, Fneu, spks, iscell, probcell, redcell, probredcell
 
-    def save_nwb(self, datafolder: str, nwbsavename: str = "ophys.nwb", savefolder = None, brain_region: str = 'PFC', lab='Spellman', institution='UCONN Health', session_description='2P recording', raw_sessions_file = None):
+    def save_nwb(self, datafolder: str, nwbsavename: str = "ophys.nwb", savefolder = None, brain_region: str = 'PFC', lab='Spellman', institution='UCONN Health', session_description='2P recording', raw_session_path = None):
         """convert folder with plane folders to NWB format
         
             Args:
@@ -205,8 +215,17 @@ class suite2p_nwb():
                 >>> savefolder: location to save the NWB file
                 >>> brain_region: which structure you are recording from
 
+                TODO::::: raw_sessions_file :::::TODO
+                >>> raw_session_path: this will be the Experiment.Raw file.
+                        >>> This will be extremely beneficial. With this input, the NWB will extract all information from that file to package.
+
             Future versions can take in a .raw sessions file
         """
+
+        # TODO: Fill in metadata using the raw file
+        if raw_session_path is not None:
+            file = xmltodict.parse(open(raw_session_path,"r").read()) # .xml file
+            fr = float(file['ThorImageExperiment']['LSM']['@frameRate'])
 
         plane_folders = natsorted([
             Path(f.path)
@@ -458,6 +477,32 @@ class suite2p_nwb():
     def neuroconv_nwb():
         pass
 
+class xml_nwb_metadata():
+
+    pass
+
+# A class designed to take an "old" NWB file and package it with your imaging data
+class package_img():
+    def __init__(nwbpath0: str, imgpath: str):
+        '''
+        This code is designed to package an old NWB file (nwbpath0) and package imaging data into it (imgpath)
+
+        WHY THOUGH?
+
+        Because sometimes you might want to keep your data usage lightweight and not package the full
+        imaging file into an NWB file for analysis.
+
+        So lets say you run "suite2p_nwb", returning your NWB file with various metadata and so forth.
+
+        I purposefully designed suite2p_nwb to be absent of the imaging data because I don't want to be
+        hogging 10-100+GB of data on a shared dropbox server.
+
+        However, when sharing data, you need the entirety of the dataset and so this code takes an old NWB
+        file which you have analyzed and merges the imaging data
+        '''
+        pass
+    pass
+
 # for handling CNMF objects from matlab caiman
 def sources2D_nwb():
     import matlab.engine
@@ -671,8 +716,8 @@ class behavior_nwb():
                                 choiceOutcome  = self.behdict['trialCorrect'][0][triali],
                                 trialRewarded  = trialRewardIdx[triali],
                                 congruentTrial = congruent[triali],
-                                olfactoryStim  = ol_stim[triali],
-                                whiskerStim    = wh_stim[triali],
+                                olfactoryStimLR= ol_stim[triali],
+                                whiskerStimLR  = wh_stim[triali],
 
                                 # duration variables
                                 trialDuration=self.behdict['trialSampleLength'][0][triali]/srate,

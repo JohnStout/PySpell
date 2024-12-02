@@ -21,3 +21,22 @@ def sem(data: np.array):
     '''
     sem_data = np.std(data, ddof=1) / np.sqrt(np.size(data))
     return sem_data
+
+def running_average(data, window_size):
+    """
+    AI generated code that performs running avg over a window_size denoted by you
+
+    Args:
+        >>> data: 1D array of data
+        >>> window_size: window to conduct running average over
+
+    Returns:
+        >>> running_averages
+    """
+    running_averages = []
+    for i in range(len(data) - window_size + 1):
+        window = data[i:i + window_size]
+        window_average = sum(window) / window_size
+        running_averages.append(window_average)
+        #print(i,'through',i+window_size)
+    return running_averages
