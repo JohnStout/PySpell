@@ -109,6 +109,9 @@ files_to_copy = ['stat.npy', 'spks.npy', 'F.npy',
                  'S.npy',    'C.npy',   'Fall.mat', 
                  's2pCellReg.mat']
 
+# it's a good tactic against your enemies
+force_push = True # forces the origin to dropbox
+
 # function to synchronize specific files in two folders
 def synchronize_folders(origin: str, destination: str, files_to_copy: list):
     '''
@@ -246,7 +249,9 @@ for i in syncpaths:
 
             # check for the file on dropbox
             behfound = [k for k in os.listdir(dropbox_folder) if k=='beh.mat']
-            if len(behfound) > 0:
+
+            # if there is existing behavioral data and you do NOT wish to force push to dropbox from origin, synchronize
+            if len(behfound) > 0 and force_push == False:
 
                 # search for update
                 mod_date_dropbox, mod_time_dropbox = get_date_time(file_path = os.path.join(dropbox_folder, 'beh.mat'))
@@ -284,6 +289,8 @@ for i in syncpaths:
                         synchronize_folders(origin = bpath, destination = dropbox_folder, files_to_copy = ['beh.mat'])
             
             else:
+                if force_push == True:
+                    print("Good. Good. Now finish it. Pushing behavior from origin to dropbox.")
 
                 # copy the file based on recent updates
                 synchronize_folders(origin = bpath, destination = dropbox_folder, files_to_copy = ['beh.mat'])
@@ -365,7 +372,11 @@ for i in syncpaths:
         # check if there exist files within the folder
         filesn = os.listdir(dropbox_s2p_folder)
         file_check = all(ei in filesn for ei in files_to_copy)
-        if file_check == False:
+
+        # if there do NOT exist files in the dropbox folder OR you wish to force push from origin to dropbox
+        if file_check == False or force_push == True:
+            if force_push == True:
+                print("The dark side is strong with this one. Force push suite2p origin to dropbox folder.")
 
             # synch
             synchronize_folders(origin = fpath, destination = dropbox_s2p_folder, files_to_copy = files_to_copy)

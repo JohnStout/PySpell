@@ -222,20 +222,29 @@ def add_to_fall(fpath: str, var_names: list = ['C.npy', 'S.npy']):
         sio.savemat(os.path.join(fpath, 'Fall.mat'), mat_data)
 
 # mechanism to read binary output from suite2p
-def read_binary(filename: str, Lx: int = 512, Ly: int = 512):
+def read_binary(fpath: str, Lx: int = 512, Ly: int = 512):
 
-    # Define the dimensions of your frames
-    #Ly = 512  # Height of each frame
-    #Lx = 512  # Width of each frame
+    # get the correct directory
+    fpath = parse_fpath(fpath=fpath)
 
-    # Path to your data.bin file
-    #filename = 'path/to/your/data.bin'
+    # read file for the ops
+    F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
+
+    # now search for binary file
+    fbin = [i for i in os.listdir(fpath) if '.bin' in i]
+    if len(fbin) > 0:
+        print(f'Discovered and reading .binary file: {fbin}')
+        bpath = os.path.join(fpath,fbin[0])
 
     # Create a BinaryFile object
-    binary_file = BinaryFile(Ly, Lx, filename)
+    n_frames, Ly, Lx = ops["nframes"], ops["Ly"], ops["Lx"]
+
+    # read
+    print("Reading BinaryFile, please wait.....")
+    binFile = BinaryFile(Ly=Ly, Lx=Lx, filename=bpath, n_frames=n_frames)
 
     # Read the data into a numpy array
-    data = binary_file.read()
+    data = binFile.data
 
     return data
 
@@ -264,7 +273,6 @@ def make_empty_suite2p(fpaths):
             print("Created path",newPath)
         except:
             pass
-
 
 # -- postprocessing code -- #
 # use this code as such: 
@@ -314,7 +322,7 @@ class postProcess():
                 # interpolate candidate noise events
                 f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
 
-                # subtract the underlying trend (detrend) from the noise-reduced signal
+                # denoised
                 f3 = savgol_filter(f2, 1001, 2)
                 f4 = f - f3
 
@@ -464,37 +472,52 @@ class postProcess():
                 mean_imgE)
 
 
+# -- restructuring-based code -- #
+
 # method to detrend your flourescent signal
-def detrend_signal(F):
+def detrend_signal(fpath: str):
     '''
-    Detrends your input signal, F
+    Detrends your input signal, F by:
+        1) Subtracting the neuropil signal
+        2) Identifying calcium events as 3mad, then setting those values to NaN
+        3) Interpolating NaN values to obtain a "baseline" or "non-event" signal
+        4) Subtracting the "baseline" or "non-event" signal from the neuropil corrected F to further detrend local activity
 
     Args: 
-        >>> F: flourescence data of the shape (C x T) for cell by time
+        >>> fpath: path to your suite2p data or path to the folder with suite2p data
+    
+    Returns:
+        >>> detF: detrended F
     '''
-    f = []; f2 = []; f2_store = np.zeros(shape=F.shape); f3 = np.zeros(shape=F.shape); f4 = np.zeros(shape=F.shape)
+
+    # read in suite2p
+    F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath = fpath)
+
+    # detrend signal
+    f = []; f2 = []; f2_store = np.zeros(shape=F.shape); 
+    f3 = np.zeros(shape=F.shape); detF = np.zeros(shape=F.shape)
     for x in range(F.shape[0]):
         print(f'denoising / deconvolving cell {x}')
-        f = []
-        f = F[x, :]
 
-        # identify candidate outlier events (noise)
+        # start by subtracting the neuropil from F
+        f = []
+        f = F - ops['neucoeff'] * Fneu
+
+        # identify candidate outlier events (signal)
         ttimes = np.where(f > np.median(f) + 3 * median_abs_deviation(f))[0]
         f2 = f.copy()
         f2[ttimes] = np.nan # nan out the events
         
         # interpolate candidate noise events
         f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
-        f2_store[x, :] = f2
+        f2_store = f2
 
-        # subtract the underlying trend (detrend) from the noise-reduced signal
-        f3[x, :] = savgol_filter(f2, 1001, 2)
-        f4[x, :] = F[x, :] - f3[x, :]
+        # secondary denoising
+        f3 = savgol_filter(f2, 1001, 2)
+        detF[x, :] = f - f3
 
-    return f4
+    return detF
 
-
-# -- restructuring-based code -- #
 
 # this is essentially F0
 def baselineF(fpath: str, baseline = None):
