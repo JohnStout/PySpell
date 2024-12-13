@@ -304,10 +304,11 @@ class RawToTif():
             time_loop = list(range(t)); time_chunker = time_loop[0::chunker]
             assert time_loop[-1]+chunker > t, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
 
+            # TODO: Remove
             # beautiful thing about python is that if the loop exceeds the samples, python will grab the remaining samples, despite you requesting more than what exists!
-            chunk_samples = int(chunker)
-            chunk_loop = count_range[0::chunk_samples] # skip every chunk_samples samples
-            assert chunk_loop[-1]+chunk_samples > total_count, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
+            #chunk_samples = int(chunker)
+            #chunk_loop = count_range[0::chunk_samples] # skip every chunk_samples samples
+            #assert chunk_loop[-1]+chunk_samples > total_count, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
 
             # I fed copilot my simpler code and it spit out a code with better error statements and so I kept that
             # Initialize timing
