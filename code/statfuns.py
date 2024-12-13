@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import stats
 
+
 def mad(data):
     """
     Calculates the Mean Absolute Deviation (M.A.D.) for a given data set.

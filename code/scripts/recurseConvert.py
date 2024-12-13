@@ -100,27 +100,38 @@ imgpaths = dict()
 # TODO: ADD mechanism to update the suite2p folder if something about the naming convention changed. So ops would need updating.
 imgpaths = [
 
-    # John Folders
-    {'Folder': r"E:\L6 Experiments\L615",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L614",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L612",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L613",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L616",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
+    {'Folder': r"E:\L6 Experiments\L612",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
 
-    {'Folder': r"E:\L6 Experiments\L609-pan", 'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},    
-    {'Folder': r"E:\L6 Experiments\L608",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L607T4",   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L1",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L6R11",    'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\L605",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"E:\L6 Experiments\T30",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
+
+    # John Folders
+    {'Folder': r"E:\L6 Experiments\L613",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+
+    {'Folder': r"E:\L6 Experiments\L615",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L614",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L616",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+
+    {'Folder': r"E:\L6 Experiments\L609-pan",                           'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},    
+    {'Folder': r"E:\L6 Experiments\L608",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L607T4",                             'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L1",                                 'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L6R11",                              'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\L605",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"E:\L6 Experiments\T30",                                'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
     
-    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
-    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False},
+    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
 
     # MDT folder
-    {'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False}    
+    {'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},   
+
+
+    # peyton/alex
+    #{'Folder': r"H:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    #{'Folder': r"H:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+
+
+
 
     ]
 
@@ -147,6 +158,8 @@ for i in imgpaths:
     if 'behReplace' not in i:
         i['behReplace'] = False
         print("Default behReplace==False for", i)
+    if 'rerunSuite2p_keepReg' not in i:
+        i['rerunSuite2p_keepReg'] = False
 
 # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
 next = 0
@@ -164,6 +177,7 @@ while next == 0:
 
             # load ops data
             alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
+            alt_ops['tau'] = 0.7 # for gcamp 6f
 
         else:
             print("Using default s2p params")
@@ -283,12 +297,12 @@ while next == 0:
                         print(f"Total time in RawToTif: {(process_end - code_start)/60:.2f} minutes")
 
                     # if suite2p folder was NOT found, or if you want to REPLACE
-                    if s2pFound == 0 or s2p_replace == True:
-                        print("No suite2p folder discovered. Running suite2p to", subi)
+                    if s2pFound == 0 or s2p_replace == True or i['rerunSuite2p_keepReg'] == True:
+                        print("Running suite2p to", subi)
                         # track timing
                         code_start = time.process_time()   
 
-                        # run conversion                 
+                        # run conversion   
                         s2pfuns.fast_suite2p(imgpath=os.path.join(subi,'img.tif'), 
                                             savepath='', 
                                             gcamp='6f', 

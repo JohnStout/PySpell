@@ -14,3 +14,15 @@ If you are attempting to use synchronizeToDropbox, you should store your data as
         `imgpath = path/to/recording_1/recording1_img`
 
 code/├── s2pfuns
+
+
+------
+
+Note that if working over dropbox environments, please run the following commands in anaconda prompt:
+
+
+`conda config --add envs_dirs "path\to.....\SpellmanLab Dropbox\timspellman\Python\envs"`
+
+then you can
+
+`conda activate dpsuite2p`

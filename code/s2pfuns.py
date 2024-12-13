@@ -68,7 +68,10 @@ def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', zoom_factor
 
         # get default suite2p inputs
         ops = suite2p.default_ops()
-        ops['fs']=fr
+        ops['fs'] = fr
+
+        # added on 12/5/2024
+        #ops['use_builtin_classifier'] = True
 
         # see here: https://suite2p.readthedocs.io/en/latest/settings.html
         # tau: (float, default: 1.0) The timescale of the sensor (in seconds), used for deconvolution kernel. The kernel is fixed to have this decay and is not fit to the data. We recommend:
@@ -281,7 +284,7 @@ class postProcess():
         self.F = F; self.Fneu = Fneu; self.spks = spks; self.stat = stat
         self.ops = ops; self.iscell = iscell; self.blF = blF
 
-    def cleanup_raw_traces(self, run_parallel: bool = True, replace_rename: bool = False):
+    def cleanup_raw_traces(self, run_parallel: bool = False, replace_rename: bool = False):
         import concurrent.futures
 
         '''
@@ -292,12 +295,17 @@ class postProcess():
 
         Args: 
             >>> run_parallel: set to False if you want to run iteratively.
-        
+            >>> replace_rename: preset to False, set to true if you want to wipe and replace
+            >>> suite2p_detrend: set to True, alternative approach is to use sgolay filter and subtract from F, but this 
         '''
 
         if run_parallel == True:
             print("run_parallel set to True, running cleanup_raw_traces using parallel processing...")
-            def process_cell(index, f):
+            def process_cell(index, F, ops, Fneu):
+
+                # neuropil corrected f
+                f = F - ops['neucoeff'] * Fneu
+
                 # identify candidate outlier events (noise)
                 ttimes = np.where(f > np.median(f) + 3 * median_abs_deviation(f))[0]
                 f2 = f.copy()
@@ -366,32 +374,30 @@ class postProcess():
             process_start = time.process_time()
             for x in range(self.F.shape[0]):
                 print(f'denoising / deconvolving cell {x}')
-                f = []; f2 = []; f3 = []; f4 = []
-                f = self.F[x, :]
 
-                # identify candidate outlier events (noise)
+                f = []; f2 = []; f3 = []; f4 = []
+
+                # neuropil corrected f, this is important for background trend removal
+                f = self.F[x,:] - self.ops['neucoeff'] * self.Fneu[x,:]
+
+                # identify candidate outlier events (signal)
                 ttimes = np.where(f > np.median(f) + 3 * median_abs_deviation(f))[0]
                 f2 = f.copy()
                 f2[ttimes] = np.nan # nan out the events
                 
-                # interpolate candidate noise events
+                # interpolate candidate signal events to estimate noise
                 f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
                 
                 # subtract the underlying trend (detrend) from the noise-reduced signal
                 f3 = savgol_filter(f2, 1001, 2)
                 f4 = f - f3
 
-                # proof
-                # plt.plot(F[x,:]); plt.plot(f2,color='r'); plt.plot(f4,color='k')
-                
-                # noise constrained deconvolution using default parameters from matlab
-                #p = 2; method = 'cvx'; bas_nonneg=1; noise_range = [.25,.5]
-                #noise_method='logmexp'; lags=5; resparse=0; fudge_factor=1
-
                 # parallel computing
                 try:
-                    c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f4, p = 2, method = 'cvx', bas_nonneg = True,
-                                                                noise_range = [0.25, 0.5], noise_method = 'logmexp',
+                    noise_range = [0.25, 0.5]
+                    deconv_method = 'cvx' # was cvx
+                    c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f4, p = 2, method = deconv_method, bas_nonneg = True,
+                                                                noise_range = noise_range, noise_method = 'logmexp',
                                                                 lags = 2, fudge_factor = 1)
                 except:
                     print("Failed to run constrained foopsi, likely division by zero")
@@ -456,6 +462,36 @@ class postProcess():
                 mean_img)
         tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
                 mean_imgE)
+
+
+# method to detrend your flourescent signal
+def detrend_signal(F):
+    '''
+    Detrends your input signal, F
+
+    Args: 
+        >>> F: flourescence data of the shape (C x T) for cell by time
+    '''
+    f = []; f2 = []; f2_store = np.zeros(shape=F.shape); f3 = np.zeros(shape=F.shape); f4 = np.zeros(shape=F.shape)
+    for x in range(F.shape[0]):
+        print(f'denoising / deconvolving cell {x}')
+        f = []
+        f = F[x, :]
+
+        # identify candidate outlier events (noise)
+        ttimes = np.where(f > np.median(f) + 3 * median_abs_deviation(f))[0]
+        f2 = f.copy()
+        f2[ttimes] = np.nan # nan out the events
+        
+        # interpolate candidate noise events
+        f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
+        f2_store[x, :] = f2
+
+        # subtract the underlying trend (detrend) from the noise-reduced signal
+        f3[x, :] = savgol_filter(f2, 1001, 2)
+        f4[x, :] = F[x, :] - f3[x, :]
+
+    return f4
 
 
 # -- restructuring-based code -- #

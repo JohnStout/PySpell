@@ -1,4 +1,7 @@
 ## neurofuns
+from scipy.stats import median_abs_deviation
+from scipy.signal import savgol_filter
+import numpy as np
 
 def peakTriggeredAvg(signal_data: np.array, threshold: float):
     """
@@ -11,3 +14,5 @@ def peakTriggeredAvg(signal_data: np.array, threshold: float):
 
 
     pass
+
+
