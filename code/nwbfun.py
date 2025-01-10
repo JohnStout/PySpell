@@ -18,6 +18,8 @@ from suite2p.detection.stats import roi_stats
 from suite2p.detection import utils
 from suite2p import run_s2p, default_ops
 
+from s2pfuns import read_s2p, read_binary, parse_fpath
+
 try:
     from pynwb import NWBHDF5IO, NWBFile, TimeSeries, validate
     from pynwb.base import Images
@@ -42,14 +44,13 @@ try:
 except ModuleNotFoundError:
     NWB = False
 
-class convert_nwb():
+class spellman_to_nwb():
     """
     This is going to take the files and file types generated in Spellman lab formats and convert
-
-    
     
     """
-    pass
+    def __init__(self, fpath):
+        pass
 
 # a class designed to interact with suite2p formats
 class suite2p_nwb():

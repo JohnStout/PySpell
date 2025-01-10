@@ -19,6 +19,8 @@ Updates:
 
     11/28/2024: Update includes dropbox synchronizing with behavioral folders. HOWEVER, you should have one _beh folder per session!
 
+    12/13/2024: Update includes force_push, a mechanism to just push from origin and alt_ops as default for suite2p
+
 """
 
 # TODO: NOW that I have the behavior converter working in recurseConvert, UPDATE THIS CODE
@@ -63,7 +65,7 @@ syncpaths = [
     {'Folder':  r"E:\L6 Experiments\L616",  
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L616_M_RightPFC_L6Chr_PFCgcamp6f_L6PAN")   
      }, 
-    {'Folder':  r"E:\L6 Experiments\L609-pan", 
+    {'Folder':  r"H:\Layer6\L609-pan", 
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L609_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN")   
      },     
 
@@ -78,10 +80,10 @@ syncpaths = [
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L608_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN")  
      },
 
-    {'Folder':  r"E:\L6 Experiments\L1",   
+    {'Folder':  r"H:\Layer6\L1",   
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L1_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN")   
      },
-    {'Folder':  r"E:\L6 Experiments\L6R11",
+    {'Folder':  r"H:\Layer6\L6R11",
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L6R11_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN")   
      },
     {'Folder':  r"E:\L6 Experiments\L605",   
@@ -333,11 +335,19 @@ for i in syncpaths:
         if 'F.npy' not in target_list or 'stat.npy' not in target_list or 'ops.npy' not in target_list or 'Fneu.npy' not in target_list or 'spks.npy' not in target_list or 'iscell.npy' not in target_list:
             # run suite2p  
             print("Suite2p files not detected. Running suite2p...")    
-            root_folder = os.path.split(os.path.split(fpath)[0])[0]         
+            root_folder = os.path.split(os.path.split(fpath)[0])[0]
+
+            # ops path
+            ops_path = os.path.join(root,'timspellman','Python','suite2p_ops')
+
+            # load ops data
+            alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
+            alt_ops['tau'] = 0.7 # for gcamp 6f            
+
             out = fast_suite2p(imgpath             = os.path.join(root_folder,'img.tif'), # path to the img.tif file
                                 savepath         = '',                                  # default saveout to the appropriate folder
                                 gcamp            = '6f',                                # use of gcamp6f reduces tau to 0.7
-                                alt_ops          = None,                                # This does NOT use spellman ops
+                                alt_ops          = alt_ops,                                # This does NOT use spellman ops
                                 wipe_and_replace = True)                                # This DOES wipe and erase the suite2p folder
             if out == False:
                 print("Skipping session:",fpath)
@@ -395,42 +405,43 @@ for i in syncpaths:
         filtered_search_list = [item for item in search_list if item not in missing_elements]
 
         # get updates
-        for fi in filtered_search_list:
+        if force_push == False:
+            for fi in filtered_search_list:
 
-            # get dropbox date
-            mod_date_dropbox, mod_time_dropbox = get_date_time(file_path = os.path.join(dropbox_s2p_folder, fi))
+                # get dropbox date
+                mod_date_dropbox, mod_time_dropbox = get_date_time(file_path = os.path.join(dropbox_s2p_folder, fi))
 
-            # get origin date
-            mod_date_origin, mod_time_origin = get_date_time(file_path = os.path.join(fpath, fi))
+                # get origin date
+                mod_date_origin, mod_time_origin = get_date_time(file_path = os.path.join(fpath, fi))
 
-            # if the modified times are 2 min offset, then copy the most recent
-            if mod_date_dropbox != mod_date_origin or mod_time_dropbox != mod_time_origin:
-                # Define the format of the time strings 
-                time_format = "%d-%m-%Y %H:%M" 
+                # if the modified times are 2 min offset, then copy the most recent
+                if mod_date_dropbox != mod_date_origin or mod_time_dropbox != mod_time_origin:
+                    # Define the format of the time strings 
+                    time_format = "%d-%m-%Y %H:%M" 
 
-                # Convert time strings to datetime objects 
-                mod_time_dropboxdt = datetime.strptime(mod_date_dropbox + ' ' + mod_time_dropbox, time_format) 
-                mod_time_origindt  = datetime.strptime(mod_date_origin  + ' ' + mod_time_origin, time_format)
-                offset = mod_time_dropboxdt - mod_time_origindt
-                #days = offset.days 
-                ##hours, remainder = divmod(offset.seconds, 3600) 
-                #minutes, seconds = divmod(remainder, 60)
+                    # Convert time strings to datetime objects 
+                    mod_time_dropboxdt = datetime.strptime(mod_date_dropbox + ' ' + mod_time_dropbox, time_format) 
+                    mod_time_origindt  = datetime.strptime(mod_date_origin  + ' ' + mod_time_origin, time_format)
+                    offset = mod_time_dropboxdt - mod_time_origindt
+                    #days = offset.days 
+                    ##hours, remainder = divmod(offset.seconds, 3600) 
+                    #minutes, seconds = divmod(remainder, 60)
 
-                # search for updates and make sure that those updates didn't occur outside of a 2 minute bounbdary to avoid a never ending cycle
-                # TODO: Check the timedelta req
-                if mod_time_dropboxdt > mod_time_origindt and offset > timedelta(minutes=2):
-                    
-                    # if the dropbox file was updated more recently, copy the files to origin
-                    print("Detected update to",dropbox_s2p_folder)
-                    print("Copying to", fpath)
-                    synchronize_folders(origin = dropbox_s2p_folder, destination = fpath, files_to_copy = files_to_copy)
+                    # search for updates and make sure that those updates didn't occur outside of a 2 minute bounbdary to avoid a never ending cycle
+                    # TODO: Check the timedelta req
+                    if mod_time_dropboxdt > mod_time_origindt and offset > timedelta(minutes=2):
+                        
+                        # if the dropbox file was updated more recently, copy the files to origin
+                        print("Detected update to",dropbox_s2p_folder)
+                        print("Copying to", fpath)
+                        synchronize_folders(origin = dropbox_s2p_folder, destination = fpath, files_to_copy = files_to_copy)
 
-                elif mod_time_dropboxdt < mod_time_origindt and offset > timedelta(minutes=2):
+                    elif mod_time_dropboxdt < mod_time_origindt and offset > timedelta(minutes=2):
 
-                    # if the dropbox file was updated more recently, copy the files to origin
-                    print("Detected update to",fpath)
-                    print("Copying to", dropbox_s2p_folder)                    
-                    synchronize_folders(origin = fpath, destination = dropbox_s2p_folder, files_to_copy = files_to_copy)
+                        # if the dropbox file was updated more recently, copy the files to origin
+                        print("Detected update to",fpath)
+                        print("Copying to", dropbox_s2p_folder)                    
+                        synchronize_folders(origin = fpath, destination = dropbox_s2p_folder, files_to_copy = files_to_copy)
 
         # TODO: ADD a method that searches for dropbox folders that are not present on the origin folder.
         # IF such folders are detected, tag them for deletion but NEVER actually delete. CHange the name of the dropbox folder to DELETEME___

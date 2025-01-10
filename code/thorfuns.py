@@ -54,6 +54,10 @@ class RawToTif():
                     - The updated method slices out the image planes
                     - - - This is really for a second reason: some LED artifacts are present in only one plane. This needs to be handled plane by plane.
     
+    
+    12/14/2024: @JS changed & bit operator to "and" logical operator.
+    12/14/2024: Addition/fixing of suite2p method
+    12/14/2024: Apparently, on our machine, parallel processing may actually increw time for numpy conversion. Now file is converted in __init__
     '''
 
     def __init__(self, filepath: str):
@@ -126,6 +130,7 @@ class RawToTif():
         planes = [elem for i, elem in enumerate(chunks) if (i + 1) % 4 != 0]
         assert int(len(planes)/3) == total_frames, "Something is wrong with your removal of flyback frames"
 
+
         '''
         # instead of pulling all of that into memory, lets write it immediately, then call the mapped data
         offset=0; vector_list = []; counter = 0; offset_list = []
@@ -155,7 +160,7 @@ class RawToTif():
         print("rootpath:",self.rootpath)
 
     # TODO: for the opto artifact correction, I need to handle each dimension separately. Interpolating events that occur before running a max projection
-    def convert(self, method: str = 'max_proj', chunker: int = 1000, led_artifacts: str = 'y', memmap_write: bool = False, wipe_and_replace: bool = False):
+    def convert(self, method: str = 'max_proj', chunker: int = 1000, led_artifacts: str = 'y', memmap_write: bool = False, wipe_and_replace: bool = False, run_parallel = True):
 
         '''
         Method to convert data
@@ -190,6 +195,8 @@ class RawToTif():
                         - Included an option for artifact conversion
                         - Included an option for the user to control the scale of saving with "chunker"
         # 10/15/2024: Updated mechanism to perform computations in parallel using copilot
+        # 12/18/2024: Finished updating the run_parallel mechanism
+
         '''
         print("This code does not support multi-channel recordings")
 
@@ -204,7 +211,8 @@ class RawToTif():
         count_range = list(range(total_count)) # define the range over which to sample data
 
         # temporary solution to prevent use of other methods before making sure they follow the updated procedures set by 'max_proj' and the __init__
-        assert method == 'max_proj', "Methods 'suite2p' and '4D' have to be updated before use."
+        assert method != '4D', "method=='4D' has not been validated. Please set method='max_proj' or method='suite2p' "
+        
         # create a memory mappable file, with vectorized data
         if '4D' in method:
 
@@ -245,9 +253,71 @@ class RawToTif():
         # this is the suite2p method for 4D data
         elif 'suite2p' in method:
 
+            # convert to numpy then save
+            print("Converting array to numpy...")
+            print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")  
+            process_start = time.process_time()   
+            self.planes = np.array(self.planes)
+            print("Time to convert to numpy:",time.process_time() - process_start)
+            print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")  
+
+            # TODO: replace this with boolean
+            if led_artifacts.lower() == 'y':
+                print("Running image interpolation for LED artifacts...")
+                ledArtifacts = dict(); meanData = dict(); meanXYzData = dict()
+                for zi in range(z):
+                    print("Working to correct artifacts in plane",zi)
+
+                    # identify candidate artifact events
+                    mean_pixels  = np.mean(np.mean(self.planes[zi::3],axis=1),axis=1) # get a pixel average over time
+                    meanXYz      = np.abs(stat.zscore(mean_pixels,axis=0)) # zscore the averaged pixels
+                    ledArtifact  = np.asarray(np.where(meanXYz > 7)).flatten()
+                    ledArtifacts['Axis'+str(zi)] =  ledArtifact
+                    meanData['Axis'+str(zi)]     =  mean_pixels
+                    meanXYzData['Axis'+str(zi)]  =  meanXYz
+
+                    # check by introducing artifacts and then interpolating them
+                    # self.planes[9999] = np.full((512, 512), 1000)
+                    # self.planes[10000] = np.full((512, 512), 1000)
+                    # self.planes[10001] = np.full((512, 512), 1000)
+                    # after you run the code below, plot
+                    # plt.plot(meanXYz)
+
+                    # interpolate missing data
+                    for imgi in ledArtifact:
+                        if imgi > 1 and imgi < len(meanXYz):
+                            print("Interpolating artifact at index:",imgi)
+
+                            # get data surrounding artifact
+                            img_temp = np.moveaxis(self.planes[zi::3][imgi-1:imgi+2], 0, -1)
+                            img_interp = imgfuns.interp_img(img=img_temp)
+
+                            # reshape result
+                            img_interp = np.moveaxis(img_interp,-1,0)
+
+                            # replace data
+                            self.planes[zi+imgi*3] = img_interp[1]
+
+                # save array
+                print("Saving ledArtifact data...")
+                ledMat = {"ledArtifact": ledArtifacts,
+                        "meanXY": meanData,
+                        "meanXYz": meanXYzData,
+                        "info": "ledArtifact is an index of artifacts. meanXY is the pixel average. meanXYz is |zscore(meanXY)|."}
+                artFile = os.path.join(self.rootpath,'ledArtifactDataInterp.mat')
+                sio.savemat(artFile, ledMat)
+
+            # quicker write
+            self.fname = os.path.join(self.rootpath, 'imgPlaneZ.tif')
+
+            # convert to numpy then save
+            print(f'Writing imgPlaneZ.tif to: {self.fname}')
+            tf.imwrite(self.fname, self.planes, dtype=self.planes.dtype, bigtiff=True)
+
+            '''
             print("method: suite2p detected. Your file will be saved with dimensions (t*z,y,x):",t*z,y,x)
             print("Please wait while memory mapped file is created...")
-            self.fname = fname_new(self.rootpath,'img_mmap_suite2p_z.tif')
+            self.fname = fname_new(self.rootpath,'imgPlaneZ.tif')
             im = tf.memmap(
                 self.fname,
                 shape=(t*z,y,x),
@@ -283,7 +353,8 @@ class RawToTif():
                 del im; im=tf.memmap(self.fname) # clean up memory
                 print("Run time for",str(framesi),"/",str(total_count),":",time.process_time() - code_start, "Memory:",str(psutil.virtual_memory()[2]),"<%> RAM utility")
             #print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")
-
+            '''
+        
         # here is the max projection method that the lab prefers
         elif 'max_proj' in method:
 
@@ -313,65 +384,80 @@ class RawToTif():
             # I fed copilot my simpler code and it spit out a code with better error statements and so I kept that
             # Initialize timing
             process_start = time.process_time()
+            print(f'Parallel processing set to: {run_parallel}')
+            if run_parallel == True:
 
-            # Function to process a chunk
-            def process_chunk(start_idx, chunk_size, planes, stride):
-                return [(i, planes[i]) for i in range(start_idx, min(start_idx + chunk_size * stride, len(planes)), stride)]
+                # Function to process a chunk
+                def process_chunk(start_idx, chunk_size, planes, stride):
+                    return [(i, planes[i]) for i in range(start_idx, min(start_idx + chunk_size * stride, len(planes)), stride)]
 
-            # Assuming planes is already defined
-            total_length = len(self.planes)
-            chunk_size = 1000  # You may adjust this as needed
-            stride = z
-            num_chunks = total_length // stride
+                # Assuming planes is already defined
+                total_length = len(self.planes)
+                chunk_size = 1000  # You may adjust this as needed
+                stride = z
+                num_chunks = total_length // stride
 
-            # Initialize the output array
-            output_shape = (z, num_chunks, y, x)
-            separated_planes = np.zeros(output_shape, dtype=self.planes[0].dtype)
+                # Initialize the output array
+                output_shape = (z, num_chunks, y, x)
+                separated_planes = np.zeros(output_shape, dtype=self.planes[0].dtype)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() - 2) as executor:
-                futures = {executor.submit(process_chunk, i + chunk_idx * stride, chunk_size, self.planes, stride): (i, chunk_idx)
-                        for i in range(stride)
-                        for chunk_idx in range(0, num_chunks, chunk_size)}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() - 2) as executor:
+                    futures = {executor.submit(process_chunk, i + chunk_idx * stride, chunk_size, self.planes, stride): (i, chunk_idx)
+                            for i in range(stride)
+                            for chunk_idx in range(0, num_chunks, chunk_size)}
 
-                completed_results = []
+                    completed_results = []
 
-                for future in concurrent.futures.as_completed(futures):
-                    i, chunk_idx = futures[future]
-                    chunk = future.result()
-                    if chunk:
-                        completed_results.append((i, chunk_idx, chunk))
-                    progress = (len(completed_results) / len(futures)) * 100
-                    print(f"{progress:.2f}% Completed")
+                    for future in concurrent.futures.as_completed(futures):
+                        i, chunk_idx = futures[future]
+                        chunk = future.result()
+                        if chunk:
+                            completed_results.append((i, chunk_idx, chunk))
+                        progress = (len(completed_results) / len(futures)) * 100
+                        print(f"{progress:.2f}% Completed")
 
-                # Sort the results to maintain order
-                completed_results.sort(key=lambda x: (x[1], x[0]))
+                    # Sort the results to maintain order
+                    completed_results.sort(key=lambda x: (x[1], x[0]))
 
-                for i, chunk_idx, chunk in completed_results:
-                    for idx, frame in chunk:
-                        plane_idx = idx % stride
-                        chunk_start = (idx - plane_idx) // stride
-                        separated_planes[plane_idx, chunk_start, :, :] = frame
+                    for i, chunk_idx, chunk in completed_results:
+                        for idx, frame in chunk:
+                            plane_idx = idx % stride
+                            chunk_start = (idx - plane_idx) // stride
+                            separated_planes[plane_idx, chunk_start, :, :] = frame
+                print("Time to separate and reshape:",time.process_time() - process_start)
+                print("Shape of the resulting 4D array:", separated_planes.shape)
 
-            print("Time to separate and reshape:",time.process_time() - process_start)
-            print("Shape of the resulting 4D array:", separated_planes.shape)
+                # very critical to ensure that the order matches the original data order
+                # assert
+                process_start = time.process_time()
+                plane0=self.planes[0::3]
+                plane1=self.planes[1::3]
+                plane2=self.planes[2::3]
 
-            # very critical to ensure that the order matches the original data order
-            # assert
-            process_start = time.process_time()
-            plane0=self.planes[0::3]
-            plane1=self.planes[1::3]
-            plane2=self.planes[2::3]
+                # randomly test for misaligned frames
+                randTest = np.random.randint(0, separated_planes.shape[1], 1000)
 
-            # randomly test for misaligned frames
-            randTest = np.random.randint(0, separated_planes.shape[1], 1000)
+                for ri in randTest:
+                    tempTest0 = plane0[ri]-separated_planes[0,ri,:,:]
+                    tempTest1 = plane1[ri]-separated_planes[1,ri,:,:]
+                    tempTest2 = plane2[ri]-separated_planes[2,ri,:,:]
+                    
+                    assert np.max(tempTest0) == 0 and np.max(tempTest1) == 0 and np.max(tempTest2) == 0 and np.min(tempTest0) == 0 and np.min(tempTest1) == 0 and np.min(tempTest2) == 0, "Misaligned frames"
+                print("Time to check frame sequence:",time.process_time() - process_start,"sec")
 
-            for ri in randTest:
-                tempTest0 = plane0[ri]-separated_planes[0,ri,:,:]
-                tempTest1 = plane1[ri]-separated_planes[1,ri,:,:]
-                tempTest2 = plane2[ri]-separated_planes[2,ri,:,:]
-                
-                assert np.max(tempTest0) == 0 and np.max(tempTest1) == 0 and np.max(tempTest2) == 0 and np.min(tempTest0) == 0 and np.min(tempTest1) == 0 and np.min(tempTest2) == 0, "Misaligned frames"
-            print("Time to check frame sequence:",time.process_time() - process_start,"sec")
+            else:
+                print("If this step is taking too long, try setting run_parallel to True")
+
+                # convert to numpy
+                self.planes = np.array(self.planes)
+
+                # separate planes
+                separated_planes = np.zeros((3, self.planes.shape[0]/3, self.planes[1], self.planes[2]), dtype=self.planes.dtype)    
+                print(f'Separating list planes into Z: {separated_planes.shape[0]}, t: {separated_planes.shape[1]}, y: {separated_planes.shape[2]}, x: {separated_planes.shape[3]}')            
+                separated_planes[0, :, :, :] = self.planes[0::3] 
+                separated_planes[1, :, :, :] = self.planes[1::3] 
+                separated_planes[2, :, :, :] = self.planes[2::3]
+                print("Time to convert img data to numpy and separate:",time.process_time() - process_start)
 
             # artifact detection
             if led_artifacts.lower() == 'y':
@@ -390,7 +476,7 @@ class RawToTif():
 
                     # interpolate missing data
                     for imgi in ledArtifact:
-                        if imgi > 1 & imgi < len(meanXYz):
+                        if imgi > 1 and imgi < len(meanXYz):
                             print("Interpolating artifact at index:",imgi)
 
                             # get data surrounding artifact

@@ -2,6 +2,14 @@
 """
 This code is designed to take folder paths, convert files, run suite2p, and run constrained foopsi
 
+TODO: ISSUES:
+    1) You cannot merge cells without introducing the C and S generation into the suite2p GUI
+        This means that all merging steps should be performed before calculating C and S
+        The same is true for cellReg, which shouldn't be run before merging is solved
+
+***************** CONSTRAINED FOOPSI IS RUN USING THE OASIS BACKEND **************
+            * Friedrich, J., Zhou, P., & Paninski, L. (2017). Fast online deconvolution of calcium imaging data. PLoS computational biology, 13(3), e1005423.
+        
 Important*: You should be able to copy files into folders while running this code. The worst issue will be memory/time to copy.
                 This code has a built in variable "busyBee" that searches for a busy folder. If detected, it will skip said folder until later.
 
@@ -44,7 +52,7 @@ Tim wrote cleanup_raw_traces in MATLAB, which was converted to Python
 CoPilot helped with parallel processing steps.
 Detrending and denoising written by Andres Grosmark and converted to Python
 
-Last edit: 
+UPDATES: 
     - 10/21/2024: Fixed parallel processing issue where jobs would be returned and placed out of order, impairing indexing
     - 10/22/2024: Added additional fail-safe for misaligned frames due to parallel processing. Such fail-safe cancels out in thorfuns if misalignments are detected. This ensures that the frame you are reading is in the correct order.
                     - Added a save-out for successful and failed attempts at converting data as .csv files in the 'Folder' root given to imgpaths.
@@ -52,6 +60,16 @@ Last edit:
     - 10/31/2024: Added option to remove img.tif files when you're finished with them to conserve memory
     - 11/01/2024: Added option to replace S.npy and C.npy files
     - 11/29/2024: Added behavioral conversion and options on whether to run a forever loop or iterate
+    - 12/??/2024:                     
+                                        IMPORTANT ADDITION:
+                        suite2p alt_ops were redefined in a critical way does increase false positives but captures everything. Additional classifier needed.
+                        These ops take much of spellOps but do not trash overlapping components. This was actually updated in 
+    - 1/10/2025: Added 'saveCleanedF' that saves out EMD denoised and sgolay/mad detrended F signals.
+                                            CRITICAL: 
+                        cleanupRawTraces is NOT run on EMD denoised data because the AR modeling in OASIS is designed to handle noisy data and this leads to overfitting and potentially increased false positives
+                        cleanupRawTraces IS run on sgolay/mad detrending
+                        However, EMD denoising +sgolay/mad detrending provide a really nice F signal and so 'saveCleanedF' was added so the user can save out
+                            this cleaner signal in case they wanted to use the F trace for analysis
 
 REFERENCES:
     Constrained Foopsi
@@ -60,9 +78,12 @@ REFERENCES:
         * Code was taken from the CaImAn package: https://github.com/flatironinstitute/CaImAn
     Suite2p
         * Pachitariu, M., et al. (2016). bioRxiv, https://www.biorxiv.org/content/10.1101/061507v2.abstract
-    Denoising steps and constrained foopsi on our data:
+    Detrending steps and constrained foopsi on our data:
+        * Friedrich, J., Zhou, P., & Paninski, L. (2017). Fast online deconvolution of calcium imaging data. PLoS computational biology, 13(3), e1005423.
         * Grosmark et al. (2021). Nature Neuroscience, 24(11), 1574-1585.
         * Spellman et al., (2021). Cell, 184(10), 2750-2766.
+    EMD analysis for denoising
+        * Tim Spellman
 
 TODO: At somepoint, merge this code with synchronizeToDropbox
 """
@@ -88,6 +109,9 @@ root = rf.dropbox_root(dropbox_folder='timspellman')
 run_opts = ['forever', 'iterate']
 run_method = 1 # change as needed. Set to 0 if forever loop
 
+# run parallel processing
+run_parallel = False
+
 if run_opts[run_method]=='iterate':
     print("Iterating through available folders. Code will not iterate forever!")
 else:
@@ -100,38 +124,41 @@ imgpaths = dict()
 # TODO: ADD mechanism to update the suite2p folder if something about the naming convention changed. So ops would need updating.
 imgpaths = [
 
-    {'Folder': r"E:\L6 Experiments\L612",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    # John folders
+    {'Folder': r"E:\L6 Experiments\L612",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L613",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L615",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L614",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L616",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L608",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L607T4",                             'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\L605",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"E:\L6 Experiments\T30",                                'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
 
-
-    # John Folders
-    {'Folder': r"E:\L6 Experiments\L613",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-
-    {'Folder': r"E:\L6 Experiments\L615",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L614",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L616",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-
-    {'Folder': r"E:\L6 Experiments\L609-pan",                           'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},    
-    {'Folder': r"E:\L6 Experiments\L608",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L607T4",                             'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L1",                                 'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L6R11",                              'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\L605",                               'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"E:\L6 Experiments\T30",                                'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},    
+    {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"H:\Layer6\L605",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
     
-    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
 
     # MDT folder
-    {'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': True, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},   
+    #{'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'cleanTracesReplace': True, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},   
 
 
     # peyton/alex
-    #{'Folder': r"H:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-    #{'Folder': r"H:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True},
-
-
-
+    '''
+    {'Folder': r"Z:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\1",          'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\B02",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\T27",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\B03",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    {'Folder': r"Z:\Peyton\48",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': False, 'cleanTracesReplace': False, 'remTif': False, 'behReplace': False, 'rerunSuite2p_keepReg': True, 'saveCleanedF': False},
+    '''
 
     ]
 
@@ -160,6 +187,8 @@ for i in imgpaths:
         print("Default behReplace==False for", i)
     if 'rerunSuite2p_keepReg' not in i:
         i['rerunSuite2p_keepReg'] = False
+    if 'saveCleanedF' not in i:
+        i['saveCleanedF'] = False
 
 # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
 next = 0
@@ -178,6 +207,7 @@ while next == 0:
             # load ops data
             alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
             alt_ops['tau'] = 0.7 # for gcamp 6f
+            alt_ops['fs'] = 7.5
 
         else:
             print("Using default s2p params")
@@ -190,6 +220,7 @@ while next == 0:
         rem_tif            = i['remTif']
         cleanTracesReplace = i['cleanTracesReplace']
         behReplace         = i['behReplace']
+        saveCleanedF       = i['saveCleanedF']
 
         if img_replace == True:
             print("img_replace==True, wiping and replacing img.tif")
@@ -287,7 +318,8 @@ while next == 0:
                         thorfuns.RawToTif(filepath=subi).convert(method='max_proj', # don't change this for now
                                                             chunker=1000, # impacts the number of samples used for parallel computing
                                                             led_artifacts=led_artifact,
-                                                            wipe_and_replace=img_replace)
+                                                            wipe_and_replace=img_replace,
+                                                            run_parallel=run_parallel)
                         
                         # update the subdirs folder
                         subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
@@ -322,7 +354,7 @@ while next == 0:
                     if len(dcSearched) < 2 or s2pFound==0 or cleanTracesReplace==True:
                         print("Postprocessing session:", subi)                        
                         code_start = time.process_time()  
-                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces(run_parallel=False)  
+                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
                         procFOVess_end = time.process_time()
                         print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
                     
@@ -332,6 +364,14 @@ while next == 0:
                         code_start = time.process_time() 
                         sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True) 
                         process_end = time.process_time()   
+
+                    # if you want to save out the cleaned F
+                    if saveCleanedF==True:
+                        print("Saving out EMD denoised and sgolay/mad detrended signals for:", subi)                        
+                        code_start = time.process_time()  
+                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).save_modified_f() 
+                        procFOVess_end = time.process_time()
+                        print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
 
                     # option to remove the .tif file bc there exists redundancy in data.bin
                     if rem_tif == True:

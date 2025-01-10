@@ -134,9 +134,11 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
                 fluor, g, sn, b=bl, c1=c1, bas_nonneg=bas_nonneg, solvers=solvers)
 
         elif method_deconvolution == 'oasis':
+            print("Running deconvolution with method OASIS")
             #from caiman.source_extraction.cnmf.oasis import constrained_oasisAR1
             penalty = 1 if s_min is None else 0
             if p == 1:
+                print("Running AR1 model")
                 if bl is None:
                     # Infer the most likely discretized spike train underlying an AR(1) fluorescence trace
                     # Solves the noise constrained sparse non-negative deconvolution problem
@@ -155,6 +157,7 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
                 # it is added back in function constrained_foopsi_parallel of temporal.py
                 c -= c1 * g**np.arange(len(fluor))
             elif p == 2:
+                print("Running AR2 model")
                 if bl is None:
                     c, sp, bl, g, lam = constrained_oasisAR2(
                         fluor.astype(np.float32), g, sn, optimize_b=True, b_nonneg=bas_nonneg,
@@ -204,11 +207,14 @@ def cvxopt_foopsi(fluor, b, c1, g, sn, p, bas_nonneg, verbosity):
 
     T = len(fluor)
 
+    # reformat g (@JS on 1/8/2025)
+    g = g.astype(np.float32)
+
     # construct deconvolution matrix  (sp = G*c)
     G = spmatrix(1., list(range(T)), list(range(T)), (T, T))
 
     for i in range(p):
-        G = G + spmatrix(-g[i], np.arange(i + 1, T),
+        G = G + spmatrix(float(-g[i]), np.arange(i + 1, T),
                          np.arange(T - i - 1), (T, T))
 
     gr = np.roots(np.concatenate([np.array([1]), -g.flatten()]))
@@ -1043,6 +1049,12 @@ def GetSn(fluor, range_ff=[0.25, 0.5], method='logmexp'):
     Returns:
         sn       : noise standard deviation
     """
+
+    # John updated to match matlab more closely
+    #Y = fluor
+    #L = len(Y)
+    #window = scipy.signal.get_window('hamming', 1000)
+    #ff, Pxx = scipy.signal.welch(Y, window=window, nperseg=1000, fs=1)
 
     ff, Pxx = scipy.signal.welch(fluor)
     ind1 = ff > range_ff[0]

@@ -480,10 +480,6 @@ training_sessions = [
     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L615_CD_odor_day1_optoRec_FOV1_LBC2_p70_img",
     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L616_SD1_whisker_day8_optoRec_FOV1_LBC2_img_001",
     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\T30_SEDS_day25_FOV6_optoRec_LBC2_img_000"
-
-    # other folders data, curated
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L613_F_LeftPFC_L6Chr_PFCgcamp8f_L6PAN\CD1_whisker_day1_LBC2_FOV2_optoRec_img"
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L615_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN\CD1_odor_day2_optoRec_FOV1_LBC2_p70_img_001"
 ]
 
 # gather data to train svm
