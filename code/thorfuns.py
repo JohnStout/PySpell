@@ -159,7 +159,6 @@ class RawToTif():
 
         print("rootpath:",self.rootpath)
 
-    # TODO: for the opto artifact correction, I need to handle each dimension separately. Interpolating events that occur before running a max projection
     def convert(self, method: str = 'max_proj', chunker: int = 1000, led_artifacts: str = 'y', memmap_write: bool = False, wipe_and_replace: bool = False, run_parallel = True):
 
         '''
@@ -196,6 +195,7 @@ class RawToTif():
                         - Included an option for the user to control the scale of saving with "chunker"
         # 10/15/2024: Updated mechanism to perform computations in parallel using copilot
         # 12/18/2024: Finished updating the run_parallel mechanism
+        # 1/10/2025: Fixed issue with shape. Must have edited the code in dec to handle numpy rather than list and didnt fix .shape attribute
 
         '''
         print("This code does not support multi-channel recordings")
@@ -375,12 +375,6 @@ class RawToTif():
             time_loop = list(range(t)); time_chunker = time_loop[0::chunker]
             assert time_loop[-1]+chunker > t, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
 
-            # TODO: Remove
-            # beautiful thing about python is that if the loop exceeds the samples, python will grab the remaining samples, despite you requesting more than what exists!
-            #chunk_samples = int(chunker)
-            #chunk_loop = count_range[0::chunk_samples] # skip every chunk_samples samples
-            #assert chunk_loop[-1]+chunk_samples > total_count, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
-
             # I fed copilot my simpler code and it spit out a code with better error statements and so I kept that
             # Initialize timing
             process_start = time.process_time()
@@ -446,13 +440,15 @@ class RawToTif():
                 print("Time to check frame sequence:",time.process_time() - process_start,"sec")
 
             else:
-                print("If this step is taking too long, try setting run_parallel to True")
 
                 # convert to numpy
+                print("Converting to numpy. Please wait... BUT If this step is taking too long consider running parallel")
                 self.planes = np.array(self.planes)
 
+                assert self.planes.shape[0] % 3 == 0, 'array is improperly divided into frames'
+
                 # separate planes
-                separated_planes = np.zeros((3, self.planes.shape[0]/3, self.planes[1], self.planes[2]), dtype=self.planes.dtype)    
+                separated_planes = np.zeros((3, int(self.planes.shape[0]/3), self.planes.shape[1], self.planes.shape[2]), dtype=self.planes.dtype)    
                 print(f'Separating list planes into Z: {separated_planes.shape[0]}, t: {separated_planes.shape[1]}, y: {separated_planes.shape[2]}, x: {separated_planes.shape[3]}')            
                 separated_planes[0, :, :, :] = self.planes[0::3] 
                 separated_planes[1, :, :, :] = self.planes[1::3] 
@@ -669,7 +665,7 @@ def importThorsync(bpath):
 
     # make sure that the first and last value of idx_offrec are outside of frameIdx
     good_rec = ( (idx_offrec[0] < frameTimes[0]) & (idx_offrec[-1] > frameTimes[-1]) )
-    assert good_rec==True, "Your behavioral data are misaligned with your imaging data. Use this session to modify the code"
+    #assert good_rec==True, "Your behavioral data are misaligned with your imaging data. Use this session to modify the code"
     if good_rec == False:
 
         # if the first frame index is less than the first flatlined piezo, that means the experimenter started recording their
@@ -680,6 +676,14 @@ def importThorsync(bpath):
         # the experimenter stopped thorsync before the img rec. The last index of frameIdx > last index of piezo.
         img_too_late = frameTimes[-1] > idx_offrec[-1] # you stopped recording img too late
 
+        # if img_too_late
+        if img_too_late:
+            print("Experimenter turned off 1) ThorSync then 2) ThorImg. Trim end of imaging data.")
+            save_tag = "_trimImgEnd"
+        elif img_too_soon:
+            print("Experimenter turned on 1) ThorImg then 2) ThorSync. Trim the start of imaging data.")
+            save_tag = "_trimImgStart"
+    
     # Extract velocity data from treadmill rotations
     if 'RotaryA' in bData and 'RotaryB' in bData:
         bData['RotaryA'][bData['RotaryA'] == 4] = 1
@@ -792,14 +796,24 @@ def importThorsync(bpath):
     frameTimes = frameTimes + 1
 
     # save
-    sio.savemat(os.path.join(bpath,'beh.mat'), {
-        'timesData': timesData,
-        'trialData': trialData,
-        'bData': bData,
-        'frameData': frameData,
-        'frameTimes': frameTimes,
-        }
-    )
+    if good_rec == False:
+        sio.savemat(os.path.join(bpath,'beh'+save_tag+'.mat'), {
+            'timesData': timesData,
+            'trialData': trialData,
+            'bData': bData,
+            'frameData': frameData,
+            'frameTimes': frameTimes,
+            }
+        )
+    else:
+        sio.savemat(os.path.join(bpath,'beh.mat'), {
+            'timesData': timesData,
+            'trialData': trialData,
+            'bData': bData,
+            'frameData': frameData,
+            'frameTimes': frameTimes,
+            }
+        )
 
 
 

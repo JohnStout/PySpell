@@ -65,6 +65,7 @@ syncpaths = [
     {'Folder':  r"E:\L6 Experiments\L616",  
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L616_M_RightPFC_L6Chr_PFCgcamp6f_L6PAN")   
      }, 
+    
     {'Folder':  r"H:\Layer6\L609-pan", 
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L609_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN")   
      },     
@@ -101,8 +102,7 @@ syncpaths = [
     {'Folder':  r"F:\John\L6 Experiments\recordings_IT\L607-T4",
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L607T4_M_RightPFC_L6Chr_PFCgcamp6f_L6CC")   
      },
-
-         
+  
         ]
 
 # copy files from origin
@@ -332,6 +332,7 @@ for i in syncpaths:
         target_list = os.listdir(fpath) # target list are the files within the origin folder (your drive, not dropbox)
 
         # detect if primary suite2p variables are missing and if so, run suite2p
+        '''
         if 'F.npy' not in target_list or 'stat.npy' not in target_list or 'ops.npy' not in target_list or 'Fneu.npy' not in target_list or 'spks.npy' not in target_list or 'iscell.npy' not in target_list:
             # run suite2p  
             print("Suite2p files not detected. Running suite2p...")    
@@ -341,7 +342,7 @@ for i in syncpaths:
             ops_path = os.path.join(root,'timspellman','Python','suite2p_ops')
 
             # load ops data
-            alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
+            alt_ops = None; #np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
             alt_ops['tau'] = 0.7 # for gcamp 6f            
 
             out = fast_suite2p(imgpath             = os.path.join(root_folder,'img.tif'), # path to the img.tif file
@@ -378,6 +379,7 @@ for i in syncpaths:
             suite2pToCellReg(fnames = fpath, mask_overlap = True) 
             process_end = time.process_time() 
             print(f"Total time to generate cellReg formatted data: {(process_end - code_start)/60:.2f} minutes")
+        '''
 
         # check if there exist files within the folder
         filesn = os.listdir(dropbox_s2p_folder)
@@ -445,9 +447,6 @@ for i in syncpaths:
 
         # TODO: ADD a method that searches for dropbox folders that are not present on the origin folder.
         # IF such folders are detected, tag them for deletion but NEVER actually delete. CHange the name of the dropbox folder to DELETEME___
-
-# TODO: synchronize behavior
-# essentially, search for _beh.mat files within a syncpath, i, and copy/paste them into the dropbox folder
 
 
 

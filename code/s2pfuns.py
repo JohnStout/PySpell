@@ -18,6 +18,9 @@ Updates:
                 and Andres's savgolay/mad detrending. Please note that denoising SHOULD NOT be used for constrained foopsi as
                 the model is designed to handle noisy data and will lead to overfitting.
 
+Planned addon:
+    1/10/25: Using the output C trace, identifying peaks, characterizing halfwidth and making sure the right side is longer than left of signal                
+
 '''
 
 #TODO: Go through code and snake_case the functions, camelCase objects
@@ -46,7 +49,7 @@ import deconvolution as dc
 from scipy.stats import median_abs_deviation
 from scipy.signal import savgol_filter
 
-# -- A handful of these functions might better serve as an object -- #
+# -- A handful of these functio ns might better serve as an object -- #
 # to quickly run suite2p
 #imgpath = r"E:\L6 Experiments\L612\FOV1\SEDS_day11_LBC2_p70_FOV1\SEDS_day11_LBC2_p70_FOV1_img\img.tif"
 def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = None, wipe_and_replace: bool = False):
@@ -115,7 +118,7 @@ def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = N
         # get default suite2p inputs - update on 12/13/2024 after noticing discrepancy in Tims and default params
         # spellOps result in ROI that look overly smoothed out while default ops are not strict enough. This is a play to find middle ground.
         ops['fs'] = fr
-        ops['max_overlap'] = 1.0 # 1.0 throws out NO ROIs
+        ops['max_overlap'] = 0.75 # 1.0 throws out NO ROIs, 0.75 allows up to 75% overlap
         ops['diameter'] = 12 # was 12, let cellpose figure it out
         ops['soma_crop'] = 1.0
         ops['use_builtin_classifier'] = True
@@ -335,6 +338,7 @@ def make_empty_suite2p(fpaths):
 #       postProcess(s2ppath = r"path/to/your/folder").cleanup_raw_traces
 # TODO: build a mechanism to rename and replace the F and spks variables with C and S for visualization purposes
 #s2ppath = r"E:\L6 Experiments\L612\FOV1\SEDS_day11_LBC2_p70_FOV1\SEDS_day11_LBC2_p70_FOV1_img"
+#s2ppath = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day11_updatedParameters\suite2p_r1\plane0"
 class postProcess():
 
     def __init__(self, s2ppath: str):
@@ -365,6 +369,537 @@ class postProcess():
         '''
         pass
 
+
+    # -- method to run OASIS -- #
+    def cleanup_raw_traces(self, replace_rename: bool = False):
+        '''
+        John put this code together based on Tim's MATLAB code and provided an parallelized option 
+        thanks to copilot
+
+        Last edit 10/19/2024
+
+        Args: 
+            >>> replace_rename: preset to False, set to true if you want to wipe and replace
+            >>> suite2p_detrend: set to True, alternative approach is to use sgolay filter and subtract from F, but this 
+        
+        UPDATES
+        1/9/25: @TS devised a denoising method using EMD analysis and @JS implemented this with sgolay to both denoise and detrend data 
+                    @JS included code that calculates the std of the noise distribution using the sgolay/mad data
+                        then uses this as input to constrained foopsi to prevent constrained foopsi from estimating noise on its own using
+                        welch's method because it auto assumes an FS=1
+        
+        1/10/25: @JS reorganized/cleaned code such that detrended data are processed in a separate method
+        '''
+
+        print("runParallel set to False. Iterating through suite2p ROIs...")
+
+        # set empty arrays
+        C = []; S = []; f_det_all = []; f_emd_all = []
+        total_cells = self.F.shape[0]
+
+        # run constrained foopsi
+        process_start = time.process_time()
+        for x in range(self.F.shape[0]):
+            print(f'denoising / deconvolving cell {x}')
+
+            # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
+            # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
+            f_detrended, __ = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
+
+            # TODO: For some reason, this didn't clean up my signal more
+            #q = np.quantile(f_detrended, 0.1)
+            #f_detrended = f_detrended - q
+
+            # option to instead use emd analysis to extract high frequency noise for std estimation
+            #__, sn = self.emd_denoise(f = f_detrended) # this makes more sense than uses sgolays sn
+
+            # running constrained foopsi
+            try:
+                process_start = time.process_time()
+                noise_range = [0.25, 0.5] # noise frequency range
+                deconv_method = 'oasis'   # OASIS
+                solvers = None            # for cvx, but doesn't matter here
+                lags = 5                  # lags==5 appear the most robust which is consistent with their default 
+                sn = None                 # let the code figure out the noise distribution
+                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = deconv_method, bas_nonneg = True,
+                                                            noise_range = noise_range, noise_method = 'logmexp', sn=sn,
+                                                            lags = lags, fudge_factor = 1, solvers=solvers, verbosity=True)
+
+                # normalize your spike train
+                mad = np.median(np.abs( (f_detrended - c) - np.median(f_detrended - c) ))
+                sp = sp / mad
+                
+                print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
+            except:
+                print("Failed to run constrained foopsi, likely division by zero")
+                c  = np.zeros(shape = self.F[x,:].shape)
+                sp = np.zeros(shape = self.F[x,:].shape)
+            C.append(c)
+            S.append(sp)
+            
+            # report on progress
+            progress = (x + 1) / total_cells * 100
+            print(f"{progress:.2f}% Completed")
+    
+        # convert to numpy
+        C = np.array(C) # denoised flourescence
+        S = np.array(S) # deconvolved spiking
+
+        # store in self
+        self.C = C
+        self.S = S
+
+        # report on timing
+        print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
+
+        # save traces and return
+        print("Saving results to",self.s2ppath)
+        if replace_rename is True:
+            print("Renaming F to F_s2p and spks to spks_s2p and saving C as F and S as spks...")
+            os.rename(os.path.join(self.s2ppath,'F.npy'), os.path.join(self.s2ppath,'F_s2p.npy'))
+            os.rename(os.path.join(self.s2ppath,'spks.npy'), os.path.join(self.s2ppath,'spks_s2p.npy'))
+            np.save(os.path.join(self.s2ppath,'F.npy'), C); print("Saved denoised flourescence (C)")
+            np.save(os.path.join(self.s2ppath,'spks.npy'), S); print("Saved deconvolved spikes (S)")
+        else:
+            np.save(os.path.join(self.s2ppath,'C.npy'), C); print("Saved denoised flourescence (C)")
+            np.save(os.path.join(self.s2ppath,'S.npy'), S); print("Saved deconvolved spikes (S)")
+        return C, S
+
+
+    # -- methods to clean-up the F trace
+    def sgolay_detrend(self, f):
+        '''
+        method that detrends signal f, an input argument representing the users fluorescent trace
+
+        Args:
+            >>> f: a single cells fluorescent trace
+        
+        Returns:
+            >>> f_detrended: a detrended version of the input 'f' signal
+            >>> sn: standard deviation of the event free 'noise' or 'baseline' signal
+        
+        '''
+
+        # identify candidate outlier events (signal)
+        mad_f = np.median(np.abs(f - np.median(f)))
+        ttimes = np.where(f > np.median(f) + 3 * mad_f)[0]
+        
+        # now replace events with nan
+        f2 = f.copy()
+        f2[ttimes] = np.nan # nan out the events
+        
+        # interpolate candidate signal events to estimate noise
+        f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
+        sn = np.std(f2) # std of the noise (baseline) distribution
+
+        # subtract the underlying trend (detrend) from the noise-reduced signal
+        f3 = savgol_filter(f2, 1001, 2)
+        f_detrended = f - f3
+        f_detrended = f_detrended.astype(np.float32)
+
+        return f_detrended, sn
+
+    def emd_denoise(self, f):
+        '''
+        Runs empirical mode decomposition (EMD) to separate non-sinosoidal 'f' signals into separate mode functions (similar to fourier transform)
+
+        NOTE:
+            This should not be run before constrained_foopsi OASIS. Constrained foopsi models the fluorescent trace
+            with inclusion of noise as variable and was designed to handle noisy signals
+            Indeed, running EMD before constrained_foopsi leads to overfitting of the AR model.
+        
+        Args:
+            >>> f: a single fluorescent trace
+
+        Returns:
+            >>> reconstructed_f: reconstructed fluorescent trace after dropping high frequency components (first two)
+            >>> sn: standard deviation of noise distribution
+
+        '''
+
+        #import concurrent.futures
+        from PyEMD import EMD
+        from scipy.signal import find_peaks
+        from scipy.ndimage import uniform_filter1d
+        import warnings
+
+        ##### Perform EMD decomposition #####
+        emd = EMD() # instantiate object
+
+        # parameter setting
+        emd.FIXE_H = 10
+        emd.MAX_ITERATION = 100
+        emd.energy_ratio_thr = 20 # was 20
+        emd.DTYPE = np.float32
+        emd.spline_kind = 'cubic' # cubic or linear
+        emd.range_thr = 0.2
+        max_imf = 10 # number of components, was 10
+        emd.extrema_detection = 'simple'
+
+        # report to user
+        print(f"EMD parameters of: max_imf count={max_imf}, FIXE_H={emd.FIXE_H}, MAX_ITERATION={emd.MAX_ITERATION}, energy_ratio_thr={emd.energy_ratio_thr}, spline_kind={emd.spline_kind}, range_thr={emd.range_thr}, extrema_detection={emd.extrema_detection}")
+
+        # run emd
+        imfs = emd(f, max_imf=max_imf) # this will return 11 rows, of which the 11th is the residual (checked)
+        assert imfs.shape[0] == max_imf+1, "emd fitting was did not match the requested number of imfs"
+
+        # subtract bottom component - JS
+        #f_sub = f-imfs[0:1].sum(axis=0)
+
+        # extract residuals and reconstruct f after dropping first and last imfs
+        residual = imfs[-1] # get residual
+        imfs = imfs[0:-1,:] # rid imfs of residual
+
+        # standard deviation of noise distribution
+        sn = np.std(imfs[0:1].sum(axis=0))
+
+        # drop the high frequency components (first two) and sum the remaining
+        reconstructed_f = imfs[2:9, :].sum(axis=0) + residual # was 2:8 in matlab, I had 2:9 after observing lost signal
+
+        # how close is the sum of components to og signal
+        #reconstructed_f = imfs[0:9].sum(axis=0)+residual
+
+        '''
+
+        #if imfs.shape[1] < 10:
+        #    imfs = np.pad(imfs, ((0, 0), (0, 10 - imfs.shape[1])), mode='constant')
+
+        # combine middle components
+        enL  = imfs[3:7, :].sum(axis=0) + residual
+        enLL = imfs[4:7, :].sum(axis=0) + residual  
+
+        # Flag timepoints unusable due to residual drift or low SNR
+        nanDrift = True  # Set this flag based on your condition
+        if nanDrift:
+            enH = uniform_filter1d(np.abs(imfs[1, :]), size=2000)
+            enM = uniform_filter1d(np.abs(imfs[2:4, :]).sum(axis=0), size=2000)
+            rto = enM / enH
+            nullTPs = np.where(rto < 2)[0]
+
+        # Scale residual signal for bleaching and slight drift
+        pI, pA = find_peaks(reconstructed_f, width=10) # peak events
+        q  = np.quantile(reconstructed_f, 0.9) # value associated with 90%tile
+        fq = np.where(pA['prominences'] > q)[0] # identify peaks > 90%tile
+        pA = pA['prominences'][fq] # filter out peaks < 90%tile 
+        pI = pI[fq] # filter out peaks < 90%tile, this is the INDEX of peaks relative to reconstructed_f
+        pI = np.concatenate(([0], pI, [len(f) - 1])) # why are we adding duplicates to start and end? Padding?
+        pA = np.concatenate((pA[:1], pA, pA[-1:]))
+
+        # Polynomial fitting
+        p   = np.polyfit(pI, pA, 2) # fit 2nd order polynomial
+        pks = np.polyval(p, np.arange(len(f)))
+        pksTmp = -pks # invert trend
+        pksTmp = pksTmp - np.min(pksTmp) + 1 # rescale
+        fTmp = enL - np.min(enL) # rescale imfs dist to be >0
+        fTmp = (fTmp * pksTmp) / np.max(fTmp)
+
+        pksTmp2 = pks - np.min(pks)
+        pksTmp2 = pksTmp2 / np.max(pksTmp2) + 1
+        fTmp2 = reconstructed_f / pksTmp2
+        fTmp2 = fTmp2 - np.min(fTmp2)
+        f = fTmp + fTmp2
+        '''
+
+        return reconstructed_f, sn
+
+    def save_modified_f(self):
+        '''
+        This function saves out reconstructed and detrended f traces.
+
+        Note that these traces can be used for analysis of F, rather than for constrained foopsi.
+        In fact, constrained foopsi is designed to handle noisy traces and will overfit your signal if EMD is run.
+        
+        TODO: EMD Analaysis is slow. Parallel processing might be required.
+
+        '''
+        print("Denoising data via EMD analysis and detrended via savgolay. Please see documentation.")
+        Warning("This code may operate slowly as the EMD analysis per cell would benefit from parallelization which has not been implemented")
+
+        # saving out cleaned traces
+        f_clean = []
+        process_start = time.process_time()
+        for x in range(self.F.shape[0]):
+
+            # run EMD first to denoise trace
+            f_reconstructed, sn_emd = self.emd_denoise(f = self.F[x,:] - self.Fneu[x,:])
+
+            # f = neuropil corrected f signal
+            f_detrended, sn_golay = self.sgolay_detrend(f = f_reconstructed)
+
+            # cache
+            f_clean.append(f_detrended)
+
+            # report
+            print(f"{round(((x+1)/self.F.shape[0]), ndigits=3)*100}% complete")
+
+        # convert f_clean to numpy
+        f_clean = np.array(f_clean)
+        print("Time to denoise and detrend:",(time.process_time() - process_start)/60,"min")    
+
+        # save
+        fpath = parse_fpath(fpath=self.s2ppath)
+
+        # save out as .mat
+        sio.savemat(file_name = os.path.join(fpath, 'F_clean.mat'), mdict={'f': f_clean, 'info': 'this signal was denoised with EMD by dropping the first two high freq components, then detrended with sgolay'})
+
+        # TO FACT CHECK FOR YOURSELF
+        '''
+        # run these lines
+
+        # instantiate object
+        self = postProcess(s2ppath = r"path/to/your/folder/with/suite2p/folder")
+
+        # choose a cell
+        x = 0
+
+        # run EMD first to denoise trace
+        f_reconstructed, sn_emd = self.emd_denoise(f = self.F[x,:] - self.Fneu[x,:])
+
+        # f = neuropil corrected f signal
+        f_detrended, sn_golay = self.sgolay_detrend(f = f_reconstructed)
+
+        plt.close()
+        %matplotlib widget
+        plt.plot(self.F[x,:] - self.Fneu[x,:], 'k', linewidth=0.5) # plot f-fneu
+        plt.plot(f_reconstructed,'b',linewidth=0.5)                # plot emd reconstructed f
+        plt.plot(f_detrended, 'r', linewidth=0.5)                  # plot the emd reconstructed, sgolay detrended signal
+        plt.legend(['f-fneu','f_emd','f_emd_sgolay'])
+                
+        '''
+
+
+    # -- methods to rescue and reject cells -- #
+    def rescue_and_reject(iscell, compact, skF, asymmetry):
+        '''
+        This code rescues candidate false rejection cells based on high skew and low compactness,
+        then rejects cells with low asymmetry
+
+        John Stout
+        '''
+        
+        # rescue non-cells - these criterion are largely good
+        rescued_cells = np.where(np.logical_and.reduce([iscell==False, compact <= 1.05, skF > 2.0]))[0]
+
+        # send forward
+        iscell[rescued_cells]=True
+
+        # rejection time - this actually seems to capture non-asymettrical cells but also
+        # really noisy cells because the event peaks are poorly estimated
+        asymmetry_cutoff = 0.4 # after finding cases of good cells > .4 but bad <=.4
+        rejected_cells = np.where(asymmetry <= asymmetry_cutoff)[0]
+        iscell[rejected_cells]=False
+
+        return iscell
+
+    # method to detect event half-width
+    def event_decay(F, Fneu, C, fs = 7.5):
+        from scipy.signal import find_peaks
+        from scipy.stats import zscore
+
+        # neuropil correct
+        Fcor = F-Fneu
+
+        assymmetry = []
+        for celli in range(C.shape[0]):
+
+            # get example traces
+            c = C[celli]
+            f = Fcor[celli]
+
+            # detect event peaks
+            cZ              = zscore(c)
+            idx_peaks, prop = find_peaks(cZ)
+            c_peaks         = cZ[idx_peaks]          # find C trace events that are also peaks
+            c_filt_idx      = np.where(c_peaks > 1)  # find C trace events that are also peaks but also greater than 1std
+            idx_peaks       = idx_peaks[c_filt_idx]  # 
+            c_peaks         = c_peaks[c_filt_idx]    # 
+            F_peaks         = f[idx_peaks] # event peaks
+
+            # Initialize decay times
+            decay_left_times = []
+            decay_right_times = []
+            cell_assymmetry = []
+
+            # Loop over events and detect decay
+            for idx, peak_value in zip(idx_peaks, F_peaks):
+
+                # Define the decay threshold (e.g., 50% of peak value)
+                decay_threshold = peak_value * 0.5
+
+                # Search for decay before the peak
+                left_indices = np.where(f[:idx] <= decay_threshold)[0]
+                if len(left_indices) > 0:
+                    decay_left = left_indices[-1]
+                    decay_left_times.append(decay_left)
+
+                # Search for decay after the peak
+                right_indices = np.where(f[idx:] <= decay_threshold)[0]
+                if len(right_indices) > 0:
+                    decay_right = idx + right_indices[0]
+                    decay_right_times.append(decay_right)
+
+                # offset
+                right_sided = np.abs((idx-decay_right) / fs)
+                left_sided = np.abs((idx-decay_left) / fs)
+                cell_assymmetry.append(right_sided-left_sided)
+
+            # take the median of the assymmetry metric
+            assymmetry.append(np.median(np.array(cell_assymmetry)))
+
+        # make into numpy
+        assymmetry = np.array(assymmetry)
+        return assymmetry
+
+        # -- these can probably be deleted -- #
+        def estimate_foopsi_lags(self):
+            import numpy as np
+            from sklearn.metrics import mean_squared_error
+
+            def foopsi(f_detrended, sn, lags):
+                # Fit the AR model with the specified lag
+                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
+                                                                noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, 
+                                                                fudge_factor = 1, solvers=None, verbosity=True)
+                print(f"lags={lags}")
+                return c
+            
+            # a function to estimation BIC
+            def calculate_bic(f_detrended, sn, lags):
+                '''
+                CoPilot put this together with tweaks by JS :)
+                '''
+                print(f"Running constrained foopsi on lags={lags}")
+
+                # Fit the AR model with the specified lag
+                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
+                                                                noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, sn=sn,
+                                                                fudge_factor = 1, solvers=None, verbosity=True)
+                
+                # Calculate the mean squared error
+                mse = mean_squared_error(f_detrended, c + bl)
+
+                # Number of parameters in the model (lags + 1 for the intercept)
+                num_params = lags + 1
+
+                # Calculate the BIC
+                n = len(f_detrended)
+                bic = n * np.log(mse) + num_params * np.log(n)
+
+                return bic
+
+            # hardcoded max lags
+            max_lags = 6 # visual inspection reveal some overfitting at lag=20, so cap it here
+
+            # loop across cells, detrend, calculate BIC with via constrained_foopsi
+            process_start = time.process_time(); best_lags = []; bic_vals_all = []
+            for x in range(self.F.shape[0]):
+
+                # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
+                # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
+                f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
+
+                # Range of possible lags to test
+                lag_range = range(1, max_lags+1)
+
+                # Calculate BIC for each lag
+                process_start = time.process_time()
+                #bic_values = [calculate_bic(f_detrended, sn, lag) for lag in lag_range]
+                Cout = [foopsi(f_detrended=f_detrended, sn=sn, lags=lagi) for lagi in lag_range]
+                Cout = np.array(Cout)
+                print("Time to estimate BIC per each lag:",(time.process_time() - process_start)/60,"min")    
+
+                
+
+                # Find the lag with the lowest BIC
+                #best_lag = lag_range[np.argmin(bic_values)]
+                #print(f"The best lag value is: {best_lag}")
+
+                # save
+                #best_lags.append(best_lag)
+                #bic_vals_all.append(bic_values)
+    
+        def random_peak_generator():
+            import numpy as np
+            import matplotlib.pyplot as plt
+
+            # Length of the signal
+            length = 60000
+
+            # Create a base random signal
+            signal = np.random.randn(length)
+
+            # Parameters for peak events
+            num_peaks = 50
+            peak_duration = 60
+            initial_peak_magnitude = 20  # Starting magnitude of peaks
+            final_peak_magnitude = 1     # Ending magnitude of peaks
+
+            # Linear decay factor for peak magnitudes
+            peak_magnitudes = np.linspace(initial_peak_magnitude, final_peak_magnitude, num_peaks)
+
+            # Evenly spaced peak start indices
+            start_indices = np.linspace(0, length - peak_duration, num_peaks).astype(int)
+
+            # Generate peak events with linearly decaying magnitudes
+            for i, start_idx in enumerate(start_indices):
+                # Create a peak event with linearly decaying magnitude
+                peak_event = np.ones(peak_duration) * peak_magnitudes[i]
+                
+                # Add the peak event to the signal
+                signal[start_idx:start_idx + peak_duration] += peak_event
+
+            # Plot the resulting signal
+            plt.figure(figsize=(12, 4))
+            plt.plot(signal, 'k', linewidth=0.5)
+            plt.title('Random Signal with Linearly Decaying Peak Events')
+            plt.xlabel('Sample Index')
+            plt.ylabel('Signal Amplitude')
+            plt.show()
+
+            return signal
+
+
+
+
+
+
+        def event_width(self, c):
+            pass
+
+        # saves the maxprojection output generated by suite2p
+        def save_maxproj_s2p(fpath: str):
+            '''
+            Function that saves out the max projection image from suite2p, saved as a .tif.
+            The saved location will be outside of the suite2p folder
+
+            Args:
+                >>> fpath: path to your suite2p folder
+            
+            '''
+            # read data
+            F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath)
+
+            # get summary images
+            max_proj  = ops['max_proj']
+            mean_img  = ops['meanImg']
+            mean_imgE = ops['meanImgE']
+
+            # save outputs
+            if os.path.split(fpath)[-1] == 'suite2p':
+                # eventually make this code a loop that loops over the various planes
+                fpath = os.path.split(fpath)[0]
+            elif os.path.split(fpath)[-1] == 'plane0':
+                fpath = os.path.split(os.path.split(fpath)[0])[0]
+
+            print("Writing summary images to",fpath)
+            tf.imwrite(os.path.join(fpath,'max_proj.tif'),
+                    max_proj)
+            tf.imwrite(os.path.join(fpath,'mean_img.tif'),
+                    mean_img)
+            tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
+                    mean_imgE)
+
+    # method for ROI classification
     def classify_roi(self):
         from sklearn.svm import SVC
         from sklearn.model_selection import train_test_split
@@ -813,6 +1348,7 @@ class postProcess():
 
         rewrite_iscell(predict_sessions = [self.s2ppath], predictions=predictions, probabilities = probabilities)
 
+    # method to merge ROI
     def automerge_roi(self):
 
         '''
@@ -989,425 +1525,6 @@ class postProcess():
             masks.add_roi(parent, len(parent.stat) - 1, i0)
             masks.redraw_masks(parent, ypix, xpix)
 
-    def cleanup_raw_traces(self, replace_rename: bool = False):
-        '''
-        John put this code together based on Tim's MATLAB code and provided an parallelized option 
-        thanks to copilot
-
-        Last edit 10/19/2024
-
-        Args: 
-            >>> replace_rename: preset to False, set to true if you want to wipe and replace
-            >>> suite2p_detrend: set to True, alternative approach is to use sgolay filter and subtract from F, but this 
-        
-        UPDATES
-        1/9/25: @TS devised a denoising method using EMD analysis and @JS implemented this with sgolay to both denoise and detrend data 
-                    @JS included code that calculates the std of the noise distribution using the sgolay/mad data
-                        then uses this as input to constrained foopsi to prevent constrained foopsi from estimating noise on its own using
-                        welch's method because it auto assumes an FS=1
-        
-        1/10/25: @JS reorganized/cleaned code such that detrended data are processed in a separate method
-        '''
-
-        print("runParallel set to False. Iterating through suite2p ROIs...")
-
-        # set empty arrays
-        C = []; S = []; f_det_all = []; f_emd_all = []
-        total_cells = self.F.shape[0]
-
-        # run constrained foopsi
-        process_start = time.process_time()
-        for x in range(self.F.shape[0]):
-            print(f'denoising / deconvolving cell {x}')
-
-            # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
-            # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
-            f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
-
-            # running constrained foopsi
-            try:
-                process_start = time.process_time()
-                noise_range = [0.25, 0.5]
-                deconv_method = 'oasis' # was cvx
-                solvers = None
-                lags = 5 # lags==5 appear the most robust which is consistent with their default 
-                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = deconv_method, bas_nonneg = True,
-                                                            noise_range = noise_range, noise_method = 'logmexp', sn=sn,
-                                                            lags = lags, fudge_factor = 1, solvers=solvers, verbosity=True)
-                print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
-
-
-            except:
-                print("Failed to run constrained foopsi, likely division by zero")
-                c  = np.zeros(shape = self.F[x,:].shape)
-                sp = np.zeros(shape = self.F[x,:].shape)
-            C.append(c)
-            S.append(sp)
-            
-            # report on progress
-            progress = (x + 1) / total_cells * 100
-            print(f"{progress:.2f}% Completed")
-        
-            # convert to numpy
-            C = np.array(C) # denoised flourescence
-            S = np.array(S) # deconvolved spiking
-
-            # report on timing
-            print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
-
-        # save traces and return
-        print("Saving results to",self.s2ppath)
-        if replace_rename is True:
-            print("Renaming F to F_s2p and spks to spks_s2p and saving C as F and S as spks...")
-            os.rename(os.path.join(self.s2ppath,'F.npy'), os.path.join(self.s2ppath,'F_s2p.npy'))
-            os.rename(os.path.join(self.s2ppath,'spks.npy'), os.path.join(self.s2ppath,'spks_s2p.npy'))
-            np.save(os.path.join(self.s2ppath,'F.npy'), C); print("Saved denoised flourescence (C)")
-            np.save(os.path.join(self.s2ppath,'spks.npy'), S); print("Saved deconvolved spikes (S)")
-        else:
-            np.save(os.path.join(self.s2ppath,'C.npy'), C); print("Saved denoised flourescence (C)")
-            np.save(os.path.join(self.s2ppath,'S.npy'), S); print("Saved deconvolved spikes (S)")
-        return C, S
-    
-    def random_peak_generator():
-        import numpy as np
-        import matplotlib.pyplot as plt
-
-        # Length of the signal
-        length = 60000
-
-        # Create a base random signal
-        signal = np.random.randn(length)
-
-        # Parameters for peak events
-        num_peaks = 50
-        peak_duration = 60
-        initial_peak_magnitude = 20  # Starting magnitude of peaks
-        final_peak_magnitude = 1     # Ending magnitude of peaks
-
-        # Linear decay factor for peak magnitudes
-        peak_magnitudes = np.linspace(initial_peak_magnitude, final_peak_magnitude, num_peaks)
-
-        # Evenly spaced peak start indices
-        start_indices = np.linspace(0, length - peak_duration, num_peaks).astype(int)
-
-        # Generate peak events with linearly decaying magnitudes
-        for i, start_idx in enumerate(start_indices):
-            # Create a peak event with linearly decaying magnitude
-            peak_event = np.ones(peak_duration) * peak_magnitudes[i]
-            
-            # Add the peak event to the signal
-            signal[start_idx:start_idx + peak_duration] += peak_event
-
-        # Plot the resulting signal
-        plt.figure(figsize=(12, 4))
-        plt.plot(signal, 'k', linewidth=0.5)
-        plt.title('Random Signal with Linearly Decaying Peak Events')
-        plt.xlabel('Sample Index')
-        plt.ylabel('Signal Amplitude')
-        plt.show()
-
-        return signal
-
-    def sgolay_detrend(self, f):
-        '''
-        method that detrends signal f, an input argument representing the users fluorescent trace
-
-        Args:
-            >>> f: a single cells fluorescent trace
-        
-        Returns:
-            >>> f_detrended: a detrended version of the input 'f' signal
-            >>> sn: standard deviation of the event free 'noise' or 'baseline' signal
-        
-        '''
-
-        # identify candidate outlier events (signal)
-        mad_f = np.median(np.abs(f - np.median(f)))
-        ttimes = np.where(f > np.median(f) + 3 * mad_f)[0]
-        
-        # now replace events with nan
-        f2 = f.copy()
-        f2[ttimes] = np.nan # nan out the events
-        
-        # interpolate candidate signal events to estimate noise
-        f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
-        sn = np.std(f2) # std of the noise (baseline) distribution
-
-        # subtract the underlying trend (detrend) from the noise-reduced signal
-        f3 = savgol_filter(f2, 1001, 2)
-        f_detrended = f - f3
-        f_detrended = f_detrended.astype(np.float32)
-
-        return f_detrended, sn
-
-    def emd_denoise(self, f):
-        '''
-        Runs empirical mode decomposition (EMD) to separate non-sinosoidal 'f' signals into separate mode functions (similar to fourier transform)
-
-        NOTE:
-            This should not be run before constrained_foopsi OASIS. Constrained foopsi models the fluorescent trace
-            with inclusion of noise as variable and was designed to handle noisy signals
-            Indeed, running EMD before constrained_foopsi leads to overfitting of the AR model.
-        
-        Args:
-            >>> f: a single fluorescent trace
-
-        Returns:
-            >>> reconstructed_f: reconstructed fluorescent trace after dropping high frequency components (first two)
-            >>> sn: standard deviation of noise distribution
-
-        '''
-
-        #import concurrent.futures
-        from PyEMD import EMD
-        from scipy.signal import find_peaks
-        from scipy.ndimage import uniform_filter1d
-        import warnings
-
-        ##### Perform EMD decomposition #####
-        emd = EMD() # instantiate object
-
-        # parameter setting
-        emd.FIXE_H = 10
-        emd.MAX_ITERATION = 100
-        emd.energy_ratio_thr = 20 # was 20
-        emd.DTYPE = np.float32
-        emd.spline_kind = 'cubic' # cubic or linear
-        emd.range_thr = 0.2
-        max_imf = 10 # number of components, was 10
-        emd.extrema_detection = 'simple'
-
-        # report to user
-        print(f"EMD parameters of: max_imf count={max_imf}, FIXE_H={emd.FIXE_H}, MAX_ITERATION={emd.MAX_ITERATION}, energy_ratio_thr={emd.energy_ratio_thr}, spline_kind={emd.spline_kind}, range_thr={emd.range_thr}, extrema_detection={emd.extrema_detection}")
-
-        # run emd
-        imfs = emd(f, max_imf=max_imf) # this will return 11 rows, of which the 11th is the residual (checked)
-        assert imfs.shape[0] == max_imf+1, "emd fitting was did not match the requested number of imfs"
-
-        # subtract bottom component - JS
-        #f_sub = f-imfs[0:1].sum(axis=0)
-
-        # extract residuals and reconstruct f after dropping first and last imfs
-        residual = imfs[-1] # get residual
-        imfs = imfs[0:-1,:] # rid imfs of residual
-
-        # standard deviation of noise distribution
-        sn = np.std(imfs[0:1].sum(axis=0))
-
-        # drop the high frequency components (first two) and sum the remaining
-        reconstructed_f = imfs[2:9, :].sum(axis=0) + residual # was 2:8 in matlab, I had 2:9 after observing lost signal
-
-        # how close is the sum of components to og signal
-        #reconstructed_f = imfs[0:9].sum(axis=0)+residual
-
-        '''
-
-        #if imfs.shape[1] < 10:
-        #    imfs = np.pad(imfs, ((0, 0), (0, 10 - imfs.shape[1])), mode='constant')
-
-        # combine middle components
-        enL  = imfs[3:7, :].sum(axis=0) + residual
-        enLL = imfs[4:7, :].sum(axis=0) + residual  
-
-        # Flag timepoints unusable due to residual drift or low SNR
-        nanDrift = True  # Set this flag based on your condition
-        if nanDrift:
-            enH = uniform_filter1d(np.abs(imfs[1, :]), size=2000)
-            enM = uniform_filter1d(np.abs(imfs[2:4, :]).sum(axis=0), size=2000)
-            rto = enM / enH
-            nullTPs = np.where(rto < 2)[0]
-
-        # Scale residual signal for bleaching and slight drift
-        pI, pA = find_peaks(reconstructed_f, width=10) # peak events
-        q  = np.quantile(reconstructed_f, 0.9) # value associated with 90%tile
-        fq = np.where(pA['prominences'] > q)[0] # identify peaks > 90%tile
-        pA = pA['prominences'][fq] # filter out peaks < 90%tile 
-        pI = pI[fq] # filter out peaks < 90%tile, this is the INDEX of peaks relative to reconstructed_f
-        pI = np.concatenate(([0], pI, [len(f) - 1])) # why are we adding duplicates to start and end? Padding?
-        pA = np.concatenate((pA[:1], pA, pA[-1:]))
-
-        # Polynomial fitting
-        p   = np.polyfit(pI, pA, 2) # fit 2nd order polynomial
-        pks = np.polyval(p, np.arange(len(f)))
-        pksTmp = -pks # invert trend
-        pksTmp = pksTmp - np.min(pksTmp) + 1 # rescale
-        fTmp = enL - np.min(enL) # rescale imfs dist to be >0
-        fTmp = (fTmp * pksTmp) / np.max(fTmp)
-
-        pksTmp2 = pks - np.min(pks)
-        pksTmp2 = pksTmp2 / np.max(pksTmp2) + 1
-        fTmp2 = reconstructed_f / pksTmp2
-        fTmp2 = fTmp2 - np.min(fTmp2)
-        f = fTmp + fTmp2
-        '''
-
-        return reconstructed_f, sn
-
-    def save_modified_f(self):
-        '''
-        This function saves out reconstructed and detrended f traces.
-
-        Note that these traces can be used for analysis of F, rather than for constrained foopsi.
-        In fact, constrained foopsi is designed to handle noisy traces and will overfit your signal if EMD is run.
-        
-        TODO: EMD Analaysis is slow. Parallel processing might be required.
-
-        '''
-        print("Denoising data via EMD analysis and detrended via savgolay. Please see documentation.")
-        Warning("This code may operate slowly as the EMD analysis per cell would benefit from parallelization which has not been implemented")
-
-        # saving out cleaned traces
-        f_clean = []
-        process_start = time.process_time()
-        for x in range(self.F.shape[0]):
-
-            # run EMD first to denoise trace
-            f_reconstructed, sn_emd = self.emd_denoise(f = self.F[x,:] - self.Fneu[x,:])
-
-            # f = neuropil corrected f signal
-            f_detrended, sn_golay = self.sgolay_detrend(f = f_reconstructed)
-
-            # cache
-            f_clean.append(f_detrended)
-
-            # report
-            print(f"{round(((x+1)/self.F.shape[0]), ndigits=3)*100}% complete")
-
-        # convert f_clean to numpy
-        f_clean = np.array(f_clean)
-        print("Time to denoise and detrend:",(time.process_time() - process_start)/60,"min")    
-
-        # save
-        fpath = parse_fpath(fpath=self.s2ppath)
-
-        # save out as .mat
-        sio.savemat(file_name = os.path.join(fpath, 'F_clean.mat'), mdict={'f': f_clean, 'info': 'this signal was denoised with EMD by dropping the first two high freq components, then detrended with sgolay'})
-
-        # TO FACT CHECK FOR YOURSELF
-        '''
-        # run these lines
-
-        # instantiate object
-        self = postProcess(s2ppath = r"path/to/your/folder/with/suite2p/folder")
-
-        # choose a cell
-        x = 0
-
-        # run EMD first to denoise trace
-        f_reconstructed, sn_emd = self.emd_denoise(f = self.F[x,:] - self.Fneu[x,:])
-
-        # f = neuropil corrected f signal
-        f_detrended, sn_golay = self.sgolay_detrend(f = f_reconstructed)
-
-        plt.close()
-        %matplotlib widget
-        plt.plot(self.F[x,:] - self.Fneu[x,:], 'k', linewidth=0.5) # plot f-fneu
-        plt.plot(f_reconstructed,'b',linewidth=0.5)                # plot emd reconstructed f
-        plt.plot(f_detrended, 'r', linewidth=0.5)                  # plot the emd reconstructed, sgolay detrended signal
-        plt.legend(['f-fneu','f_emd','f_emd_sgolay'])
-                
-        '''
-
-    def estimate_foopsi_lags(self):
-        import numpy as np
-        from sklearn.metrics import mean_squared_error
-
-        def foopsi(f_detrended, sn, lags):
-            # Fit the AR model with the specified lag
-            c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
-                                                            noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, 
-                                                            fudge_factor = 1, solvers=None, verbosity=True)
-            print(f"lags={lags}")
-            return c
-        
-        # a function to estimation BIC
-        def calculate_bic(f_detrended, sn, lags):
-            '''
-            CoPilot put this together with tweaks by JS :)
-            '''
-            print(f"Running constrained foopsi on lags={lags}")
-
-            # Fit the AR model with the specified lag
-            c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
-                                                            noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, sn=sn,
-                                                            fudge_factor = 1, solvers=None, verbosity=True)
-            
-            # Calculate the mean squared error
-            mse = mean_squared_error(f_detrended, c + bl)
-
-            # Number of parameters in the model (lags + 1 for the intercept)
-            num_params = lags + 1
-
-            # Calculate the BIC
-            n = len(f_detrended)
-            bic = n * np.log(mse) + num_params * np.log(n)
-
-            return bic
-
-        # hardcoded max lags
-        max_lags = 6 # visual inspection reveal some overfitting at lag=20, so cap it here
-
-        # loop across cells, detrend, calculate BIC with via constrained_foopsi
-        process_start = time.process_time(); best_lags = []; bic_vals_all = []
-        for x in range(self.F.shape[0]):
-
-            # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
-            # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
-            f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
-
-            # Range of possible lags to test
-            lag_range = range(1, max_lags+1)
-
-            # Calculate BIC for each lag
-            process_start = time.process_time()
-            #bic_values = [calculate_bic(f_detrended, sn, lag) for lag in lag_range]
-            Cout = [foopsi(f_detrended=f_detrended, sn=sn, lags=lagi) for lagi in lag_range]
-            Cout = np.array(Cout)
-            print("Time to estimate BIC per each lag:",(time.process_time() - process_start)/60,"min")    
-
-            
-
-            # Find the lag with the lowest BIC
-            #best_lag = lag_range[np.argmin(bic_values)]
-            #print(f"The best lag value is: {best_lag}")
-
-            # save
-            #best_lags.append(best_lag)
-            #bic_vals_all.append(bic_values)
-
-
-    # saves the maxprojection output generated by suite2p
-    def save_maxproj_s2p(fpath: str):
-        '''
-        Function that saves out the max projection image from suite2p, saved as a .tif.
-        The saved location will be outside of the suite2p folder
-
-        Args:
-            >>> fpath: path to your suite2p folder
-        
-        '''
-        # read data
-        F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath)
-
-        # get summary images
-        max_proj  = ops['max_proj']
-        mean_img  = ops['meanImg']
-        mean_imgE = ops['meanImgE']
-
-        # save outputs
-        if os.path.split(fpath)[-1] == 'suite2p':
-            # eventually make this code a loop that loops over the various planes
-            fpath = os.path.split(fpath)[0]
-        elif os.path.split(fpath)[-1] == 'plane0':
-            fpath = os.path.split(os.path.split(fpath)[0])[0]
-
-        print("Writing summary images to",fpath)
-        tf.imwrite(os.path.join(fpath,'max_proj.tif'),
-                max_proj)
-        tf.imwrite(os.path.join(fpath,'mean_img.tif'),
-                mean_img)
-        tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
-                mean_imgE)
 
 # this is essentially F0
 def baselineF(fpath: str, baseline = None):
