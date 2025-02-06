@@ -183,21 +183,23 @@ def rescue_and_reject(iscell, stat, compact, skF, asymmetry):
     
     print("Rescuing cells with 1) strong skew and removing cells with 1) low asymmetry and 2) low pixel counts")
 
-    # rescue non-cells - these criterion are largely good
-    rescued_cells = np.where(np.logical_and.reduce([iscell==False, compact <= 1.05, skF > 2.0]))[0]
-
-    # send forward
-    iscell[rescued_cells]=True
-
     # rejection time - this actually seems to capture non-asymettrical cells but also
     # really noisy cells because the event peaks are poorly estimated
     asymmetry_cutoff = 0.4 # after finding cases of good cells > .4 but bad <=.4
     rejected_cells = np.where(asymmetry <= asymmetry_cutoff)[0]
     iscell[rejected_cells]=False
 
+    # rescue non-cells - these criterion are largely good
+    #rescued_cells = np.where(np.logical_and.reduce([iscell==False, compact <= 1.05, skF > 2.0]))[0]
+    #iscell[rescued_cells]=True 
+
     # if there are <100 pixels in a cell, toss it
     npix = np.array([i['npix'] for i in stat])
     iscell[npix<100]=False
+
+    # if there are <100 pixels in a cell, toss it
+    skew = np.array([i['skew'] for i in stat])
+    iscell[skew<1.2]=False    
 
     return iscell
 
@@ -294,29 +296,8 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
     print("Detecting overlapping ROI to toss")
 
     # --  detrend the signal -- #
-    Fcor = F-Fneu; f_det = []
-    for f in Fcor:
-        # identify candidate outlier events (signal)
-        mad_f = np.median(np.abs(f - np.median(f)))
-        ttimes = np.where(f > np.median(f) + 3 * mad_f)[0]
-        
-        # now replace events with nan
-        f2 = f.copy()
-        f2[ttimes] = np.nan # nan out the events
-        
-        # interpolate candidate signal events to estimate noise
-        f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
-        sn = np.std(f2) # std of the noise (baseline) distribution
-
-        # subtract the underlying trend (detrend) from the noise-reduced signal
-        f3 = savgol_filter(f2, 1001, 2)
-        f_detrended = f - f3
-        f_detrended = f_detrended.astype(np.float32)    
-
-        # store
-        f_det.append(f_detrended)
-    f_det = np.array(f_det)
-
+    Fcor = F-Fneu; 
+    
     # calculate skew using the non-detrended signal, like suite2p
     skew = stats.skew(F-Fneu, axis=1)
 
@@ -332,7 +313,7 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
             med_dist = (((stat[ii]['med'][0]-stat[i]['med'][0]) ** 2) + ((stat[ii]['med'][1]-stat[i]['med'][1]) ** 2)) ** 0.5
                 
             # if the ROI are less than 20 pixels apart between two classified cells, check for event overlap
-            if med_dist < 20 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
+            if med_dist < 15 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
 
                 # detect event peaks
                 idx_peaks_i, c_raw_peaks_i, cZ_peaks_i    = calcium_events(c = C[i])
@@ -382,7 +363,7 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
                 # identify the percentage of events in celii that co-occured with celli
                 percent_overlap_i_to_ii = (len(peaki_overlap) / len(idx_peaks_i)) * 100
                 
-                if percent_overlap_i_to_ii > 50 or percent_overlap_ii_to_i > 50:
+                if percent_overlap_i_to_ii > 25 or percent_overlap_ii_to_i > 25:
                     print(f'Detected overlapping cell candidate between cell {ii} and cell {i}')
                     
                     # determine which cell to send backwards using skew
@@ -394,8 +375,116 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
                         iscell[i] = False
     return iscell
 
+# updated calcium_events code that accounts for overalapping evernts
+def calcium_events(c, Fc, zscore_threshold=1, fs=7.5):
+    """
+    Calcium event detection using the C trace output from constrained foopsi OASIS.
+
+    Args:
+        c: a single c trace
+        Fc: filtered signal
+        zscore_threshold: default = 1 std which appears to be pretty good
+        fs: sampling frequency, default = 7.5
+
+    Returns:
+        idx_peaks_C: peak indices in C
+        idx_peaks_F: peak indices in Fc
+    """
+    import numpy as np
+    from scipy.stats import zscore
+    from scipy.signal import find_peaks
+    UserWarning("This code has not been tested. The old calcium_events_old was used in Python. This code was converted from MATLAB")
+
+    # Compute z-score of the signal
+    cZ = zscore(c)
+
+    # Find peaks in the z-scored signal
+    idx_peaks_C, _ = find_peaks(cZ)
+    pks = cZ[idx_peaks_C]
+
+    # Identify peaks that are within 5s of each other and keep the strongest peak
+    time_range = np.linspace(0, len(c) / fs, len(c))
+    peak_times = time_range[idx_peaks_C]
+
+    next_flag = False
+    while not next_flag:
+        # Get difference in peak times
+        peak_offset = np.diff(peak_times)
+
+        # Identify peaks that are too close to each other
+        double_peak_candidate = np.where(peak_offset < 5)[0]
+
+        if double_peak_candidate.size == 0:
+            next_flag = True
+        else:
+            # Examine each peak and keep the max event
+            for evi in range(len(double_peak_candidate)):
+                # Get the events from each and identify which events are best (difference between events)
+                event_diff = pks[double_peak_candidate[evi]:double_peak_candidate[evi]+2]
+                
+                # Take the minima and remove it
+                event_toss = np.argmin(event_diff)
+                
+                # Set to NaN so we don't change the size of the array during the loop
+                idx_peaks_C[double_peak_candidate[evi] + event_toss] = np.nan
+                peak_times[double_peak_candidate[evi] + event_toss] = np.nan
+                pks[double_peak_candidate[evi] + event_toss] = np.nan
+
+            # Remove NaNs
+            idx_peaks_C = idx_peaks_C[~np.isnan(idx_peaks_C)]
+            peak_times = peak_times[~np.isnan(peak_times)]
+            pks = pks[~np.isnan(pks)]
+
+    # Search through peak_times for max events in Fc
+    Fc_sm = smooth(Fc, window_len=int(ceil(fs)*4), window='gaussian')
+
+    # Now correct the peak offset
+    idx_peaks_F = []
+    for evi in range(len(idx_peaks_C)):
+        # Get 5s surrounding idx_peak
+        idx_around = np.arange(max(0, idx_peaks_C[evi] - int(fs*5)), min(len(c), idx_peaks_C[evi] + int(fs*5)))
+
+        # Now get data surrounding time point of interest
+        temp_F = Fc_sm[idx_around]
+
+        # Get peak of the temp variable
+        max_temp_F = np.max(temp_F)
+        idx_max_temp_F = np.argmax(temp_F)
+
+        # Reset the idx_peak
+        idx_peaks_F.append(idx_around[idx_max_temp_F])
+
+    # Convert idx_peaks_F to numpy array
+    idx_peaks_F = np.array(idx_peaks_F)
+
+    # Now filter for z-score threshold
+    idx_peaks_C = idx_peaks_C[cZ[idx_peaks_C.astype(int)] > zscore_threshold]
+    idx_peaks_F = idx_peaks_F[cZ[idx_peaks_F.astype(int)] > zscore_threshold]
+
+    return idx_peaks_C, idx_peaks_F
+
+def smooth(data, window_len=11, window='hanning'):
+    if window_len < 3:
+        return data
+    s = np.r_[data[window_len-1:0:-1], data, data[-2:-window_len-1:-1]]
+    if window == 'flat':  # moving average
+        w = np.ones(window_len, 'd')
+    else:
+        w = eval('np.'+window+'(window_len)')
+    y = np.convolve(w/w.sum(), s, mode='valid')
+    return y[(window_len//2-1):-(window_len//2)]
+
+
+# Example usage
+#c = np.random.randn(1000)
+#Fc = np.random.randn(1000)
+#idx_peaks_C, idx_peaks_F = calcium_events(c, Fc)
+#print("C peaks:", idx_peaks_C)
+#print("Fc peaks:", idx_peaks_F)
+
+
 # function to find calcium event peaks
-def calcium_events(c, zscore_threshold = 1):
+def calcium_events_old(c, zscore_threshold = 1):
     '''
     calcium event detection using the C trace output from constrained foopsi OASIS
     
@@ -582,6 +671,8 @@ def predict_cell(df_predict, svc, scaler, selected_features, pca, n_components):
     '''
 
     # TODO check the n_component
+    # only run the classifier on cells already deemed "cells"
+    #df_predict_cell = df_predict[df_predict['iscell']==True]
 
     # cleanup data
     df_clean, idx_rem = cleanup_classifier_data(df_all = df_predict)
@@ -612,24 +703,38 @@ def predict_cell(df_predict, svc, scaler, selected_features, pca, n_components):
     probabilities = svc.predict_proba(X_pca_filt)
 
     # replace the removed cells and set them to false
-    final_probabilities = np.empty((len(probabilities) + len(idx_rem), probabilities.shape[1]), dtype=object)
-    final_predictions   = np.empty(len(predictions) + len(idx_rem), dtype=object)
+    if len(idx_rem) > 0:
+        print(f'Detected removed cells {idx_rem}, replacing with 0.0 or False in classification array')
+        final_probabilities = np.empty((len(probabilities) + len(idx_rem), probabilities.shape[1]), dtype=object)
+        final_predictions   = np.empty(len(predictions) + len(idx_rem), dtype=object)
+        final_scores        = np.empty(len(decision_scores) + len(idx_rem), dtype=object)
 
-    # Initialize pointers for the probabilities and final_probabilities arrays
-    prob_idx = 0; final_idx = 0
+        # Initialize pointers for the probabilities and final_probabilities arrays
+        prob_idx = 0; final_idx = 0
 
-    # Fill the final_probabilities array with shifting
-    for i in range(final_probabilities.shape[0]):
-        if final_idx in idx_rem:
-            final_probabilities[final_idx] = 0.0
-            final_predictions[final_idx] = False
-        else:
-            final_probabilities[final_idx] = probabilities[prob_idx]
-            final_predictions[final_idx] = predictions[prob_idx]
-            prob_idx += 1
-        final_idx += 1
+        # Fill the final_probabilities array with shifting
+        for i in range(final_probabilities.shape[0]):
+            if final_idx in idx_rem:
+                final_probabilities[final_idx] = 0.0
+                final_scores[final_idx] = 0.0
+                final_predictions[final_idx] = False
+            else:
+                final_probabilities[final_idx] = probabilities[prob_idx]
+                final_scores[final_idx] = decision_scores[prob_idx]
+                final_predictions[final_idx] = predictions[prob_idx]
+                prob_idx += 1
+            final_idx += 1
 
-    return predictions, probabilities, decision_scores
+        # change to bool
+        final_probabilities=final_probabilities.astype(bool)
+
+        # rename
+        del predictions, probabilities, decision_scores
+        predictions = final_predictions
+        probabilities = final_probabilities
+        decision_scores = final_scores
+
+    return predictions.astype(bool), probabilities, decision_scores
 
 # function that calls in the iscell variable and rewrites it according to predict_cell predictions
 def rewrite_data(predict_sessions, predictions, probabilities):
@@ -730,302 +835,3 @@ for sessi in predict_sessions:
                                                                 pca=pca, n_components=n_components)
 
     rewrite_data(predict_sessions = [sessi], predictions=predictions, probabilities = probabilities)
-
-
-'''
-predict_sessions = [
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierTestSuite2p\L612_CD2_whisker_day2_p70it_FOV1_LBC2_optoRec_img",
-
-    # for tim
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L612_F_RightPFC_L6Chr_PFCgcamp8f_L6PAN\SEDS_day7_LBC2_p70_optoRec_FOV1_img",
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L614_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SEDS_day2_optoRec_LBC2_p70_FOV3_img",
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L608_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SEDS_day8_FOV1_LBC0_noOpto_img"
-
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L615_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN\CD1_whisker_day1_optoRec_FOV1_LBC2_img"
-   
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L613_F_LeftPFC_L6Chr_PFCgcamp8f_L6PAN\CD1_whisker_day1_LBC2_FOV2_optoRec_img",
-    #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L615_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN\CD1_odor_day2_optoRec_FOV1_LBC2_p70_img_001"
-]
-
-# New unseen data to predict
-unseen_data = pd.DataFrame({
-    # Include your data columns here
-})
-
-# Make predictions on the new unseen data
-predictions = predict_new_data(unseen_data, svc, scaler)
-print(predictions)
-
-
-
-
-
-
-# plot
-%matplotlib inline
-plt.figure()
-plt.scatter(sv[:,0], sv[:,1], s=15, edgecolors='k', c='r')
-plt.show()
-
-## method with PCA is improved in accuracy
-
-# Standardize the features
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-# Apply PCA
-n_components = 10  # Number of principal components to keep (you can adjust this value)
-pca = PCA(n_components=n_components)
-X_train_pca = pca.fit_transform(X_train_scaled) # calculate PCs from training data
-X_test_pca = pca.transform(X_test_scaled) # uses the same PCs from the training data, applied to testing data
-
-import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-
-# Assuming X_train_scaled is already defined
-pca = PCA()
-pca.fit(X_train_scaled)
-
-# Plot cumulative explained variance
-cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-plt.plot(cumulative_variance)
-plt.xlabel('Number of Principal Components')
-plt.ylabel('Cumulative Explained Variance')
-plt.axhline(y=0.95, color='r', linestyle='--')
-plt.axvline(x=np.where(cumulative_variance >= 0.95)[0][0], color='r', linestyle='--')
-plt.title('Explained Variance by Principal Components')
-plt.show()
-
-# Number of components to retain 95% variance
-n_components = np.where(cumulative_variance >= 0.95)[0][0] + 1
-print(f'Number of components to retain 95% variance: {n_components}')
-
-
-# Initialize the SVC classifier
-svc = SVC(kernel='linear', C=1, gamma=0.1)
-
-# Train the model
-svc.fit(X_train_pca, y_train)
-
-# Make predictions on the test set
-y_pred = svc.predict(X_test_pca)
-
-# Evaluate the model
-accuracy = accuracy_score(y_test, y_pred)
-print(f'Accuracy: {accuracy}')
-
-# Evaluate accuracy on accepted components (true)
-accepted_indices = np.where(y_test == True)[0]
-accuracy_accepted = accuracy_score(y_test.iloc[accepted_indices], y_pred[accepted_indices])
-print(f'Accuracy on accepted components (true): {accuracy_accepted}')
-
-
-
-
-# recursive feature elimination removes the least important features
-# and builds model until optimal number of features are reached
-
-
-
-
-
-
-
-
-
-
-r_values_min=0.8,
-r_values_lowest=-1,
-
-idx_components_r = np.where(r_values >= r_values_min)[0]
-idx_components_raw = np.where(comp_SNR > min_SNR)[0]
-
-bad_comps = np.where((r_values <= r_values_lowest) | (comp_SNR <= min_SNR_reject))[0]
-cnn_values = []
-
-idx_components = np.union1d(idx_components, idx_components_r)
-idx_components = np.union1d(idx_components, idx_components_raw)
-idx_components = np.setdiff1d(idx_components, bad_comps)
-idx_components_bad = np.setdiff1d(list(range(len(r_values))), idx_components)
-
-
-
-# good inputs
-# fitness, npix_norm, compact, 
-
-
-# Show plot
-plt.show()
-
-
-
-
-
-
-# non correlated vars
-# sd_r, skew, fitness
-
-# classifier loc
-class_data = np.load(os.path.join(path_added,'scripts','classifier_stout.npy'), allow_pickle = True).item()
-
-self = Classifier()
-class Classifier:
-    """ ROI classifier model that uses logistic regression
-    
-    Parameters
-    ----------
-
-    classfile: string (optional, default None)
-        path to saved classifier
-
-    keys: list of str (optional, default None)
-        keys of ROI stat to use to classify
-
-    """
-
-    def __init__(self, classfile=None, keys=None):
-        # stat are cell stats from currently loaded recording
-        # classfile is a previously saved classifier file
-        if classfile is not None:
-            self.load(classfile, keys=keys)
-        else:
-            self.loaded = False
-            self.keys = keys
-
-    def load(self, classfile, keys=None):
-        """ data loader
-
-        saved classifier contains stat with classification labels 
-
-        Parameters
-        ----------
-        
-        classfile: string 
-            path to saved classifier
-
-        keys: list of str (optional, default None)
-            keys of ROI stat to use to classify
-         
-        """
-        try:
-            model = np.load(classfile, allow_pickle=True).item()
-            if keys is None:
-                self.keys = model["keys"]
-                self.stats = model["stats"]
-            else:
-                model["keys"] = np.array(model["keys"])
-                ikey = np.isin(model["keys"], keys)
-                self.keys = model["keys"][ikey].tolist()
-                self.stats = model["stats"][:, ikey]
-            self.iscell = model["iscell"]
-            self.loaded = True
-            self.classfile = classfile
-            self._fit()
-        except (ValueError, KeyError, OSError, RuntimeError, TypeError, NameError):
-            print("ERROR: incorrect classifier file")
-            self.loaded = False
-
-    def run(self, stat, p_threshold: float = 0.5) -> np.ndarray:
-        """Returns cell classification thresholded with "p_threshold" and its probability."""
-        probcell = self.predict_proba(stat)
-        is_cell = probcell > p_threshold
-        return np.stack([is_cell, probcell]).T
-
-    def predict_proba(self, stat):
-        """ apply logistic regression model and predict probabilities
-
-        model contains stat with classification labels 
-
-        Parameters
-        ----------
-        
-        stat : list of dicts
-            needs self.keys keys
-
-        """
-        test_stats = np.array([stat[j][k] for j in range(len(stat)) for k in self.keys
-                              ]).reshape(len(stat), -1)
-        logp = self._get_logp(test_stats)
-        y_pred = self.model.predict_proba(logp)[:, 1]
-        return y_pred
-
-    def save(self, filename: str) -> None:
-        """ save classifier to filename """
-        np.save(filename, {
-            "stats": self.stats,
-            "iscell": self.iscell,
-            "keys": self.keys
-        })
-
-    def _get_logp(self, stats):
-        """ compute log probability of set of stats
-        
-        Parameters
-        --------------
-
-        stats : 2D array
-            size [ncells, nkeys]
-        
-        """
-        logp = np.zeros(stats.shape)
-        for n in range(stats.shape[1]):
-            x = stats[:, n]
-            x[x < self.grid[0, n]] = self.grid[0, n]
-            x[x > self.grid[-1, n]] = self.grid[-1, n]
-            x[np.isnan(x)] = self.grid[0, n]
-            ibin = np.digitize(x, self.grid[:, n], right=True) - 1
-            logp[:, n] = np.log(self.p[ibin, n] + 1e-6) - np.log(1 - self.p[ibin, n] +
-                                                                 1e-6)
-        return logp
-
-    def _fit(self):
-        """ fit logistic regression model using stats, keys and iscell """
-        nodes = 100
-        ncells, nstats = self.stats.shape
-        ssort = np.sort(self.stats, axis=0)
-        isort = np.argsort(self.stats, axis=0)
-        ix = np.linspace(0, ncells - 1, nodes).astype("int32")
-        grid = ssort[ix, :]
-        p = np.zeros((nodes - 1, nstats))
-        for j in range(nodes - 1):
-            for k in range(nstats):
-                p[j, k] = np.mean(self.iscell[isort[ix[j]:ix[j + 1], k]])
-        p = gaussian_filter(p, (2., 0))
-        self.grid = grid
-        self.p = p
-        logp = self._get_logp(self.stats)
-        self.model = LogisticRegression(C=100., solver="liblinear")
-        self.model.fit(logp, self.iscell)
-
-
-
-# pnr
-
-
-np.where(iscell==False)
-
-import pandas as pd
-df = pd.DataFrame(data = {
-    'iscell': iscell,
-    'snr': snr,
-    'skewF': skF,
-    'skewN': skN
-    })
-
-# what if I test their distributions?
-plt.hist(Ndet[0])
-plt.hist(Fdet[0])
-
-
-# Map the boolean variable to colors
-colors = np.where(df_all['iscell'], 'red', 'blue')
-
-# Create 3D scatter plot
-%matplotlib widget
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax = fig.add_subplot(111, projection='3d') 
-ax.scatter(df_all['comp_SNR'], df_all['npix_norm'], df_all['compact'], c=colors, marker='o') 
-
-'''

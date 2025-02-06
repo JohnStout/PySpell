@@ -1,9 +1,9 @@
-# SCRIPT to cleanup raw traces in a single folder with a bunch of subfolders
+# SCRIPT to cleanup raw traces or run EMD on a few sessions
 #
 # This is particularly useful in cases where you have a ton of F traces and you 
 # just want to clean them without running through recurseConvert, which is a much larger, batch-type script
 #
-# John Stout on 1/22/2025
+# John Stout on 1/27/2025
 
 # load modules
 import os; import matplotlib.pyplot as plt; import tifffile as tf
@@ -23,7 +23,10 @@ import sessreg
 root = rf.dropbox_root(dropbox_folder='timspellman')
 
 # define datafolder to run over
-Datafolder = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p"
+sessions = [
+    r"H:\Layer6\L615\SEDS_day5_FOV1_optoRec_LBC2_p70\SEDS_day5_FOV1_optoRec_LBC2_p70_img",
+    r"H:\Layer6\L615\SEDS_day7_FOV1_optoRec_LBC2_p70\SEDS_day7_FOV1_optoRec_LBC2_p70_img_000"
+]
 
 # get all subdirs
 subdirs = rf.list_all_subdirs(phile_name = Datafolder)
@@ -31,6 +34,3 @@ sessions_to_clean = [i for i in subdirs if 'plane0' in i] # filter out for suite
 
 # loop over sessions and clean
 [s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]
-
-# save out EMD cleaned signal
-#[s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]

@@ -599,8 +599,9 @@ def remTif(fname):
     else:
         print(f"{fname} does not exist")
 
-# dysfunctional for now
-#TODO Make functional
+# converting behavioral data
+# TODO: Build a GUI that allows to user to fix behavioral/recording issues
+# for example, the user may have the wrong order of recording buttons or maybe didnt stop thorsync while xploring data generating piezo motor errors that misalign data
 def importThorsync(bpath):
     '''
     importThorSync
@@ -626,13 +627,9 @@ def importThorsync(bpath):
         if saveData is None:
             saveData = True
         return subsamp, saveData
-
     subsamp, saveData = check_and_set_defaults()
 
-    # Get the extension on the fileName path
-    #bpath = "E:\L6 Experiments\L608\FOV1\SEDS_day10_FOV1_optoRec_LBC0\SEDS_day10_FOV1_optoRec_LBC0_beh"
-    #bpath = r"F:\John\L6 Experiments\recordings_L5CT\L6-05\FOV1\SD2_odor_day6_FOV1_optoRec\SD2_odor_day6_FOV1_optoRec_restart_beh001"
-
+    # behavioral path
     bpath = os.path.abspath(bpath)
     ext = os.path.splitext(bpath)[1]
 
@@ -652,6 +649,15 @@ def importThorsync(bpath):
         bData[i] = dataIn['DI'][i][:]
         if np.max(bData[i]) > 0:
             bData[i] = np.ravel(bData[i]/np.max(bData[i]))
+
+    # another source of error are cases where the user stopped the img recording then started
+    # viewing the data and causing the piezo to work again without stopping thorsync
+    # np.where(np.logical_and(piezo_norm < 0.3, bData['FrameOut'] > 0.9)==True)
+    
+    # manually search for those events and fill in the index to set to zero
+    #index = 5345472
+    #for key in bData.keys():
+    #    bData[key][index:-1] = 0.0
 
     # Index of frame times for behavior
     frameTimes = np.where(np.diff(bData['FrameOut'],axis=0)==1)[0]
@@ -683,7 +689,7 @@ def importThorsync(bpath):
         elif img_too_soon:
             print("Experimenter turned on 1) ThorImg then 2) ThorSync. Trim the start of imaging data.")
             save_tag = "_trimImgStart"
-    
+
     # Extract velocity data from treadmill rotations
     if 'RotaryA' in bData and 'RotaryB' in bData:
         bData['RotaryA'][bData['RotaryA'] == 4] = 1
