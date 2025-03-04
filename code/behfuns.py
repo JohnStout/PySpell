@@ -17,7 +17,7 @@ os.chdir(os.getcwd())
 import statfuns as stata
 import plotters as plter
 
-bpath = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Panneuronal\T30_M_LeftPFC_L6Chr_PFCgcamp6f\FOV3\SEDS_day8_FOV3_probe_noOpto"
+#bpath = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Panneuronal\T30_M_LeftPFC_L6Chr_PFCgcamp6f\FOV3\SEDS_day8_FOV3_probe_noOpto"
 
 def load_putty(bpath: str):
     """

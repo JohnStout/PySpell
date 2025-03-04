@@ -312,7 +312,7 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
             # get distance between centriods
             med_dist = (((stat[ii]['med'][0]-stat[i]['med'][0]) ** 2) + ((stat[ii]['med'][1]-stat[i]['med'][1]) ** 2)) ** 0.5
                 
-            # if the ROI are less than 20 pixels apart between two classified cells, check for event overlap
+            # if the ROI are less than 15 pixels apart between two classified cells, check for event overlap
             if med_dist < 15 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
 
                 # detect event peaks
@@ -436,7 +436,7 @@ def calcium_events(c, Fc, zscore_threshold=1, fs=7.5):
             pks = pks[~np.isnan(pks)]
 
     # Search through peak_times for max events in Fc
-    Fc_sm = smooth(Fc, window_len=int(ceil(fs)*4), window='gaussian')
+    Fc_sm = smooth(Fc, window_len=int(np.ceil(fs)*4), window='gaussian')
 
     # Now correct the peak offset
     idx_peaks_F = []
@@ -463,6 +463,7 @@ def calcium_events(c, Fc, zscore_threshold=1, fs=7.5):
 
     return idx_peaks_C, idx_peaks_F
 
+# smooth data
 def smooth(data, window_len=11, window='hanning'):
     if window_len < 3:
         return data
@@ -473,15 +474,6 @@ def smooth(data, window_len=11, window='hanning'):
         w = eval('np.'+window+'(window_len)')
     y = np.convolve(w/w.sum(), s, mode='valid')
     return y[(window_len//2-1):-(window_len//2)]
-
-
-# Example usage
-#c = np.random.randn(1000)
-#Fc = np.random.randn(1000)
-#idx_peaks_C, idx_peaks_F = calcium_events(c, Fc)
-#print("C peaks:", idx_peaks_C)
-#print("Fc peaks:", idx_peaks_F)
-
 
 # function to find calcium event peaks
 def calcium_events_old(c, zscore_threshold = 1):
@@ -613,16 +605,15 @@ def build_classifier(df_all, auto_feature_select = True, preset_features = False
     # estimate # of PCs to use based on cumulative explained variance
     cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
     plt.plot(cumulative_variance)
-    plt.xlabel('Number of Principal Components')
-    plt.ylabel('Cumulative Explained Variance')
+    plt.xlabel('# Principal Components')
+    plt.ylabel('Cum. Variance')
     plt.axhline(y=0.95, color='r', linestyle='--')
     plt.axvline(x=np.where(cumulative_variance >= 0.95)[0][0], color='r', linestyle='--')
-    plt.title('Explained Variance by Principal Components')
     plt.show()
 
     # Number of components to retain 95% variance
     n_components = np.where(cumulative_variance >= 0.95)[0][0] + 1
-    print(f'Number of components to retain 95% variance: {n_components}')
+    print(f'# of components to retain 95% variance: {n_components}')
 
     # PCs to keep
     print("Cleaned up X_train and X_test accordingly...")
@@ -833,5 +824,6 @@ for sessi in predict_sessions:
     # test classifier
     predictions, probabilities, decision_scores = predict_cell(df_predict = df_predict, svc=svc, scaler=scaler, selected_features=selected_features,
                                                                 pca=pca, n_components=n_components)
+
 
     rewrite_data(predict_sessions = [sessi], predictions=predictions, probabilities = probabilities)

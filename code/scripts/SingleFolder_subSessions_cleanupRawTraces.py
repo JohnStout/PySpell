@@ -33,4 +33,4 @@ sessions_to_clean = [i for i in subdirs if 'plane0' in i] # filter out for suite
 [s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]
 
 # save out EMD cleaned signal
-#[s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]
+#[s2pfuns.postProcess(s2ppath=sessi).save_modified_f() for sessi in sessions_to_clean]

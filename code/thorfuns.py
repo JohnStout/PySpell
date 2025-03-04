@@ -640,6 +640,8 @@ def importThorsync(bpath):
         fnames = [f for f in dirFiles if f.endswith('.h5')]  # file names in directory
         fileName = os.path.join(bpath, fnames[0])
         print(f"Discovered and loading: {fnames[0]}")
+    else:
+        fileName = bpath
 
     # Reading behavioral data
     print("Reading behavioral data from:",fileName)

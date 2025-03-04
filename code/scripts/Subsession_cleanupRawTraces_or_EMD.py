@@ -28,9 +28,5 @@ sessions = [
     r"H:\Layer6\L615\SEDS_day7_FOV1_optoRec_LBC2_p70\SEDS_day7_FOV1_optoRec_LBC2_p70_img_000"
 ]
 
-# get all subdirs
-subdirs = rf.list_all_subdirs(phile_name = Datafolder)
-sessions_to_clean = [i for i in subdirs if 'plane0' in i] # filter out for suite2p
-
 # loop over sessions and clean
-[s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]
+[s2pfuns.postProcess(s2ppath=sessi).save_modified_f() for sessi in sessions]
