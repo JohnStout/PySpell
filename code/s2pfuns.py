@@ -541,7 +541,9 @@ class postProcess():
 
         # run emd
         imfs = emd(f, max_imf=max_imf) # this will return 11 rows, of which the 11th is the residual (checked)
-        assert imfs.shape[0] == max_imf+1, "emd fitting was did not match the requested number of imfs"
+        #assert imfs.shape[0] == max_imf+1, "emd fitting was did not match the requested number of imfs"
+        if imfs.shape[0] != max_imf+1:
+            warnings.warn("emd fitting did not match the requested number of imfs, this may result in improper removal of noise.")
 
         # subtract bottom component - JS
         #f_sub = f-imfs[0:1].sum(axis=0)

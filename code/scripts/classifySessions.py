@@ -116,6 +116,8 @@ def gather_classifier_data(classifier_sessions: list):
         frate = 7.5
         N_samples = np.ceil(frate * decay_time).astype(int)
 
+        # -- this is from CaImAns code to estimate an SNR -- #
+
         # Inclusion probability of noise transient
         thresh_fitness_raw = special.log_ndtr(-min_SNR) * N_samples
 
@@ -125,6 +127,7 @@ def gather_classifier_data(classifier_sessions: list):
         # Components with SNR lower than 0.5 will be rejected
         thresh_fitness_raw_reject = special.log_ndtr(-min_SNR_reject) * N_samples
         comp_SNR = -norm.ppf(np.exp(fitness / N_samples))
+        # --------------------------------------------------- #
 
         # PNR
         pnr_data = pnr(F=F-Fneu, Fneu=Ndet)
@@ -211,7 +214,7 @@ def event_decay(F, Fneu, C, fs = 7.5):
     # neuropil correct
     Fcor = F-Fneu
 
-    assymmetry = []
+    asymmetry = []
     for celli in range(C.shape[0]):
 
         # get example traces
@@ -234,7 +237,7 @@ def event_decay(F, Fneu, C, fs = 7.5):
         # Initialize decay times
         decay_left_times = []
         decay_right_times = []
-        cell_assymmetry = []
+        cell_asymmetry = []
 
         # Loop over events and detect decay
         for idx, peak_value in zip(idx_peaks, F_peaks):
@@ -257,14 +260,14 @@ def event_decay(F, Fneu, C, fs = 7.5):
             # offset
             right_sided = np.abs((idx-decay_right) / fs)
             left_sided = np.abs((idx-decay_left) / fs)
-            cell_assymmetry.append(right_sided-left_sided)
+            cell_asymmetry.append(right_sided-left_sided)
 
-        # take the median of the assymmetry metric
-        assymmetry.append(np.median(np.array(cell_assymmetry)))
+        # take the median of the asymmetry metric
+        asymmetry.append(np.median(np.array(cell_asymmetry)))
 
     # make into numpy
-    assymmetry = np.array(assymmetry)
-    return assymmetry
+    asymmetry = np.array(asymmetry)
+    return asymmetry
 
     # Plot Fcor signal with detected peaks and decay points
     #plt.close()
@@ -376,7 +379,7 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
     return iscell
 
 # updated calcium_events code that accounts for overalapping evernts
-def calcium_events(c, Fc, zscore_threshold=1, fs=7.5):
+def calcium_events_new(c, Fc, zscore_threshold=1, fs=7.5):
     """
     Calcium event detection using the C trace output from constrained foopsi OASIS.
 
@@ -476,7 +479,7 @@ def smooth(data, window_len=11, window='hanning'):
     return y[(window_len//2-1):-(window_len//2)]
 
 # function to find calcium event peaks
-def calcium_events_old(c, zscore_threshold = 1):
+def calcium_events(c, zscore_threshold = 1):
     '''
     calcium event detection using the C trace output from constrained foopsi OASIS
     
@@ -492,12 +495,13 @@ def calcium_events_old(c, zscore_threshold = 1):
     from scipy.stats import zscore
     from scipy.signal import find_peaks
 
+    # use the c trace to identify peak times
     cZ              = zscore(c)
-    idx_peaks, prop = find_peaks(cZ)
-    cZ_peaks        = cZ[idx_peaks]          # find C trace events that are also peaks
-    c_raw_peaks     = c[idx_peaks]
+    idx_peaks, prop = find_peaks(cZ)          # find C trace events peaks
+    cZ_peaks        = cZ[idx_peaks]           # zscored C trace events that are also peaks
+    c_raw_peaks     = c[idx_peaks]            # raw C trace events that are also peaks
     c_filt_idx      = np.where(cZ_peaks > 1)  # find C trace events that are also peaks but also greater than 1std
-    idx_peaks       = idx_peaks[c_filt_idx]  # 
+    idx_peaks       = idx_peaks[c_filt_idx]   # indices of C peaks
     cZ_peaks        = cZ_peaks[c_filt_idx]    # zscored C peaks
     c_raw_peaks     = c_raw_peaks[c_filt_idx] # C peaks
 

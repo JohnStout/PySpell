@@ -90,6 +90,10 @@ UPDATES:
                 If a major update was performed on suite2p, it would be applied on all sessions in the imgpaths folder
                 and as such, will automatically be applied based on datetime updates.
 
+    - 3/5/2025: Minor updates to code. 
+                    - Fixed a bug where sessions were being skipped
+                    - Fixed CellReg file naming convention and provided a tool to replace old naming
+                    - Added a warning for imf improper fit
 
 REFERENCES:
     Constrained Foopsi
@@ -161,27 +165,31 @@ imgpaths = dict()
 imgpaths = [
 
     # John folders
-    {'Folder': r"E:\L6 Experiments\L608",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\L612",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\L613",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\L614",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\L616",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\L607T4",                             'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\L6 Experiments\T30",                                'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
 
-    {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
-    {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"H:\Layer6\L605",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"H:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+    # {'Folder': r"D:\L6 Experiments\L608",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"D:\L6 Experiments\L612",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"D:\L6 Experiments\L613",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"D:\L6 Experiments\L614",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"D:\L6 Experiments\L616",                               'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+     #{'Folder': r"D:\L6 Experiments\L607T4",                             'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+     #{'Folder': r"D:\L6 Experiments\T30",                                'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
 
-    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+    # {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"H:\Layer6\L605",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    #{'Folder': r"E:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+
+    # {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    # {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
 
     # MDT folder
-    #{'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'remTif': False, 'behReplace': False, 'saveCleanedF': False},   
+    #{'Folder': r"E:\ThalamicRec\MDT1", 'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'cellRegReplace': True, 'remTif': False, 'behReplace': False, 'saveCleanedF': False},      
+    {'Folder': r"I:\Alex",         'SpellOps': False, 'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
+    #rename the above to Alex's folder!
+
 
 
     # peyton/alex
@@ -287,6 +295,7 @@ while next == 0:
                 #break
 
             # check if folder is busy
+            print('Searching for busy folders...')
             busyBee = rf.is_folder_busy(subi)
 
             # if the .Raw file was discovered, then executive img.tif and suite2p conversion
@@ -430,6 +439,13 @@ while next == 0:
                             process_end = time.process_time() # report
                             print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
                         
+                            # find whether deconvolution steps were already performed
+                            dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
+                            dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
+
+                            # search for cellreg
+                            crSearched  = [i for i in dcSearch if 'CellReg.mat' in i]
+
                     # --------------------------------------------------------- #
                     # -------------------- POST PROCESSING -------------------- #
 
@@ -437,12 +453,12 @@ while next == 0:
                     # 1) dcSearched < 2: suite2p folder was found but the C and S variables missing
                     # 2) s2pFound==0: the suite2p folder was not found, was just created, and now you can add those variables
                     if len(dcSearched) < 2 or s2pFound==0:
-    
+
                         print("Postprocessing session:", subi)                        
                         code_start = time.process_time()  
                         s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
                         procFOVess_end = time.process_time()
-                        print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
+                        print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
                     
                     # replacement traces are requested, s2p folder present and the C/S files also present
                     elif len(dcSearched) >= 2:
@@ -461,7 +477,7 @@ while next == 0:
                             code_start = time.process_time()  
                             s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
                             procFOVess_end = time.process_time()
-                            print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
+                            print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
                     
                     # --------------------------------------------------------- #
                     # -------------------- CELL REG --------------------------- #
@@ -471,7 +487,16 @@ while next == 0:
 
                         print("Preparing cellReg data for session:", subi)                        
                         code_start = time.process_time() 
-                        sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True) 
+
+                        # create cell reg file name
+                        reg_file_name = os.path.split(subi)[-1][0:20]
+                        if reg_file_name[-1]=='_':
+                            reg_file_name = reg_file_name+'CellReg.mat'
+                        else:
+                            reg_file_name = reg_file_name+'_CellReg.mat'
+
+                        # make cellReg file
+                        sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True, save_name=reg_file_name) 
                         process_end = time.process_time()  
 
                     # if file detected or cellRegReplace == True
@@ -487,8 +512,34 @@ while next == 0:
 
                             print("Suite2p update detected. Forced rerun of cellReg mask saveout...")
                             code_start = time.process_time() 
-                            sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True) 
-                            process_end = time.process_time()                            
+
+                            # create cell reg file name
+                            reg_file_name = os.path.split(subi)[-1][0:20]
+                            if reg_file_name[-1]=='_':
+                                reg_file_name = reg_file_name+'CellReg.mat'
+                            else:
+                                reg_file_name = reg_file_name+'_CellReg.mat'
+
+                            # make cellReg file                        
+                            sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True, save_name=reg_file_name) 
+                            process_end = time.process_time()   
+
+                        else:
+
+                            # rename from old file convention
+                            crSearched  = [i for i in dcSearch if 's2pCellReg.mat' in i]
+
+                            if len(crSearched) > 0:
+                                print("Detected old s2pCellReg.mat file convention. Renaming to match your session.")
+                                
+                                # create cell reg file name
+                                reg_file_name = os.path.split(subi)[-1][0:20]
+                                if reg_file_name[-1]=='_':
+                                    reg_file_name = reg_file_name+'CellReg.mat'
+                                else:
+                                    reg_file_name = reg_file_name+'_CellReg.mat'
+                                
+                                os.rename(os.path.join(subi,'suite2p','plane0','s2pCellReg.mat'), os.path.join(subi,'suite2p','plane0',reg_file_name))                            
 
                     # --------------------------------------------------------- #
                     # -------------------- OPTION FOR A CLEANED F ------------- #
@@ -525,7 +576,7 @@ while next == 0:
                         print("Erasing img.tif file:", subi)                        
                         thorfuns.remTif(os.path.join(subi,'img.tif'))
 
-                    #success_subi.append(subi) # save variable for reporting
+                    success_subi.append(subi) # save variable for reporting
 
                 except:
 
@@ -553,7 +604,7 @@ while next == 0:
             # delete datetime variable so we are only working with each sessions unique timedate data
             try: # sometimes, some loops don't have these data, like say loop #1
                 del datetime_binary, datetime_cleanF, datetime_reg, datetime_suite2p, datetime_img, datetime_traces
-                del s2p_update_datetime, clean_traces_datetime, creation_date_binary, creation_date_cleanF, creation_date_img
+                del creation_date_binary, creation_date_cleanF, creation_date_img
                 del creation_date_reg, creation_date_suite2p, creation_date_traces, creation_time_binary, creation_time_cleanF
                 del creation_time_img, creation_time_reg, creation_time_suite2p, creation_time_traces
             except:

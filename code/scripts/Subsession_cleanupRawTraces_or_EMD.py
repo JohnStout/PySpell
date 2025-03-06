@@ -24,8 +24,10 @@ root = rf.dropbox_root(dropbox_folder='timspellman')
 
 # define datafolder to run over
 sessions = [
-    r"H:\Layer6\L615\SEDS_day5_FOV1_optoRec_LBC2_p70\SEDS_day5_FOV1_optoRec_LBC2_p70_img",
-    r"H:\Layer6\L615\SEDS_day7_FOV1_optoRec_LBC2_p70\SEDS_day7_FOV1_optoRec_LBC2_p70_img_000"
+    r'E:\L6 Experiments\L608\FOV1\SDswitch_day12_optoRec_FOV1_LBC0\SDswitch_day12_optoRec_FOV1_LBC0_img_001'
+    #r'E:\L6 Experiments\L608\FOV1\SEDS_day12_FOV1_optoRec_LBC0_noProbe\SEDS_day12_FOV1_optoRec_LBC0_noProbe_img'
+    #r"H:\Layer6\L615\SEDS_day5_FOV1_optoRec_LBC2_p70\SEDS_day5_FOV1_optoRec_LBC2_p70_img",
+    #r"H:\Layer6\L615\SEDS_day7_FOV1_optoRec_LBC2_p70\SEDS_day7_FOV1_optoRec_LBC2_p70_img_000"
 ]
 
 # loop over sessions and clean

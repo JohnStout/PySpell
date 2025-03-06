@@ -17,7 +17,7 @@ import s2pfuns
 from scipy import io as sio
 
 # this code will save .mat files of shape NxMxK, where N is the # of neurons, M is the # of pixels on y-axis, and k is the number of pixels on x-axis
-def suite2pToCellReg(fnames, mask_overlap: bool = True):
+def suite2pToCellReg(fnames, mask_overlap: bool = True, save_name: str = 's2pCellReg.mat'):
     
     '''
     Code that converts suite2p results to a format compatible with cellReg
@@ -88,8 +88,8 @@ def suite2pToCellReg(fnames, mask_overlap: bool = True):
 
         # save
         save_dir = os.path.join(fi,'suite2p','plane0')
-        print("Saving cellReg compatible footprint array to",os.path.join(save_dir,'s2pCellReg.mat'))
-        sio.savemat(os.path.join(save_dir,'s2pCellReg.mat'), {'footprints': footprint})
+        print("Saving cellReg compatible footprint array to",os.path.join(save_dir,save_name))
+        sio.savemat(os.path.join(save_dir, save_name), {'footprints': footprint})
 
     return footprint
 
