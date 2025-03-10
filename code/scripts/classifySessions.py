@@ -127,6 +127,7 @@ def gather_classifier_data(classifier_sessions: list):
         # Components with SNR lower than 0.5 will be rejected
         thresh_fitness_raw_reject = special.log_ndtr(-min_SNR_reject) * N_samples
         comp_SNR = -norm.ppf(np.exp(fitness / N_samples))
+
         # --------------------------------------------------- #
 
         # PNR
@@ -562,7 +563,7 @@ def build_classifier(df_all, auto_feature_select = True, preset_features = False
     X_train = scaler.fit_transform(X_train) # fit and transform X_train using mean and std of X-mean
     X_test  = scaler.transform(X_test) # transform X_test using mean and std of X_train
 
-    # Evaluate RFE for a range of n_features_to_select values
+    # use recursive feature elimination to identify the best candidate features for classification
     if auto_feature_select == True:
         print("Automatically detecting which features to use for classification")
 
