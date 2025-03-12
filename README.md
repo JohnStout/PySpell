@@ -1,6 +1,13 @@
-PySpell
+### PySpell
 
-A collection of codes used to convert, store, and process imaging data.
+A collection of code used to convert, store, and process imaging data.
+
+##### Download
+
+To download environment, cd to the location of the PySpell package, then in the base environment run:
+    `conda env create -f PySpellEnv.yml`
+
+To use our modified version of the suite2p GUI, you can copy the files in GUI>suite2pGUI and place them in the libs>site-packages>suite2p>gui folder 
 
 Note that if you are attempting to use recurseConvert, you can store your data anywhich way you choose.
 

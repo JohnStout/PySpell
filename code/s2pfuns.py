@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 '''
 A collection of functions that handle suite2p data and an object "postProcess" designed
 to postprocess suite2p results.
@@ -45,12 +47,36 @@ if 'PySpell'.lower() in os.path.split(os.getcwd())[-1].lower():
     os.chdir(new_path)
 
 # these are for caiman-based deconvolution
-import deconvolution as dc
 from scipy.stats import median_abs_deviation
 from scipy.signal import savgol_filter
+import matplotlib.pyplot as plt
 
-# -- A handful of these functio ns might better serve as an object -- #
-# to quickly run suite2p
+# and theres more
+import pandas as pd
+import rootfun
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import RFE
+
+from caiman_funs.caiman_eval import compute_event_exceptionality
+import scipy.io as sio
+
+from scipy import stats, special
+from scipy.stats import norm, median_abs_deviation
+from scipy.signal import savgol_filter, find_peaks
+from scipy.ndimage import gaussian_filter1d
+
+
+# ---------------------------------------- #
+# ----  MAJOR STAND ALONE FUNCTIONS  ----- #
+# ---------------------------------------- #
+
+# fast_suite2p is a major function
 #imgpath = r"E:\L6 Experiments\L612\FOV1\SEDS_day11_LBC2_p70_FOV1\SEDS_day11_LBC2_p70_FOV1_img\img.tif"
 def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = None, wipe_and_replace: bool = False):
     """
@@ -224,124 +250,13 @@ def read_s2p(fpath: str):
 
     return F, Fneu, spks, stat, ops, iscell, blF
 
-# a function to make sense of the fpath input
-def parse_fpath(fpath: str):
-    '''
-    function to take an fpath input and return the suite2p folder
-
-    Args:
-        >>> fpath: path to suite2p variables to load
-
-    '''
-    if os.path.split(fpath)[-1] == 'suite2p':
-        # eventually make this code a loop that loops over the various planes
-        fpath = os.path.join(fpath,'plane0')
-    elif os.path.split(fpath)[-1] != 'plane0' and os.path.split(fpath)[-1] != 'suite2p':
-        fpath = os.path.join(fpath,'suite2p','plane0') 
-    return fpath     
-
-# a function to add files to the fall.mat variable
-def add_to_fall(fpath: str, var_names: list = ['C.npy', 'S.npy']):
-    '''
-    A function that takes the Fall.mat variable and adds whatever variables
-    in the var_names list
-
-    Args:
-        >>> fpath: path to suite2p variables to load
-        >>> var_names: list of variables to add to the Fall.mat
-                        - The default is C.npy and S.npy as they aren't natively saved to Fall.mat
-
-    John Stout
-    '''
-
-    # get path data
-    fpath = parse_fpath(fpath = fpath)
-
-    # search for var_names
-    dir_contents = os.listdir(fpath)
-    vars_found = [i for i in dir_contents if i in var_names]
-    print("Discovered", vars_found)
-
-    # load the vars_found data into workspace - thanks copilot :)
-    data_dict = {os.path.splitext(i)[0]: np.load(os.path.join(fpath, i)) for i in vars_found}
-    
-    # load the Fall var
-    fall_found = 'Fall.mat' in dir_contents
-    if fall_found:
-
-        # load data
-        from scipy import io as sio
-        mat_data = sio.loadmat(os.path.join(fpath,'Fall.mat'))
-
-        # append
-        mat_data.update(data_dict)
-
-        # save
-        print("Saving variables as", os.path.join(fpath, 'Fall.mat'))
-        sio.savemat(os.path.join(fpath, 'Fall.mat'), mat_data)
-
-# mechanism to read binary output from suite2p
-def read_binary(fpath: str, Lx: int = 512, Ly: int = 512):
-
-    # get the correct directory
-    fpath = parse_fpath(fpath=fpath)
-
-    # read file for the ops
-    F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
-
-    # now search for binary file
-    fbin = [i for i in os.listdir(fpath) if '.bin' in i]
-    if len(fbin) > 0:
-        print(f'Discovered and reading .binary file: {fbin}')
-        bpath = os.path.join(fpath,fbin[0])
-
-    # Create a BinaryFile object
-    n_frames, Ly, Lx = ops["nframes"], ops["Ly"], ops["Lx"]
-
-    # read
-    print("Reading BinaryFile, please wait.....")
-    binFile = BinaryFile(Ly=Ly, Lx=Lx, filename=bpath, n_frames=n_frames)
-
-    # Read the data into a numpy array
-    data = binFile.data
-
-    return data
-
-# makes empty suite2p folders in subdirectories. The fpaths input is a
-def make_empty_suite2p(fpaths):
-    '''
-    makeEmptySuite2p
-
-    Creates empty suite2p folders in subdirectories.
-
-    Args:
-        >>> fpaths: Master directory with a bunch of sessions that you want empty suite2p folders created in
-    '''
-
-    # get subdirectories
-    fpath = os.listdir(fpaths)
-    for i in fpath:
-
-        # make temporary directory
-        temp_dir = os.path.join(fpaths,i)
-        newPath = os.path.join(fpaths,i,'suite2p','plane0')
-
-        # create paths
-        try:
-            os.makedirs(newPath)
-            print("Created path",newPath)
-        except:
-            pass
-
-# -- postprocessing code -- #
-# use this code as such: 
-#       postProcess(s2ppath = r"path/to/your/folder").cleanup_raw_traces
-# TODO: build a mechanism to rename and replace the F and spks variables with C and S for visualization purposes
-#s2ppath = r"E:\L6 Experiments\L612\FOV1\SEDS_day11_LBC2_p70_FOV1\SEDS_day11_LBC2_p70_FOV1_img"
-#s2ppath = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day11_updatedParameters\suite2p_r1\plane0"
+# ---------------------------------------- #
+# --- MAJOR OBJECTS FOR POSTPROCESSING --- #
+# ---------------------------------------- #
 class postProcess():
 
     def __init__(self, s2ppath: str):
+        import deconvolution as dc
 
         # read suite2p results
         F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath = s2ppath)
@@ -353,22 +268,12 @@ class postProcess():
         self.F = F; self.Fneu = Fneu; self.spks = spks; self.stat = stat
         self.ops = ops; self.iscell = iscell; self.blF = blF
 
-    def roi_cleanup():
-        '''
-        On plane3D signals, this code will be designed to 
-            1) identify overlapping ROI in each plane
-                Lets say ROIA and ROIB are present in all planes, overlapping 70%
-            2) Use CaImAns intersection over union technique to co-label cells in multiple planes
-            3) identify which plane the ROI should belong based on its peak activity
-                If ROIA is maximally active in plane0, then remove it from plane1 and 2. Same for ROIB
-                Preserve the activity traces by pushing them from plane1 and plane2 to plane0 via max projection over the ROI
-                    Likewise, we will need to subtract the space of ROIA that is being explained by ROIB
-            3) Use grid interpolation
-                Interpolate the removed component by identifying times of its peak activity and NaN remove, then interpolate
-                
-        '''
-        pass
-
+        # load C and S if they exist
+        try: 
+            self.C = np.load(os.path.join(s2ppath,'C.npy'), allow_pickle=True)
+            self.S = np.load(os.path.join(s2ppath,'S.npy'),)
+        except:
+            print("C and S not found in",s2ppath)
 
     # -- method to run OASIS -- #
     def cleanup_raw_traces(self, replace_rename: bool = False):
@@ -465,7 +370,6 @@ class postProcess():
             np.save(os.path.join(self.s2ppath,'S.npy'), S); print("Saved deconvolved spikes (S)")
         return C, S
 
-
     # -- methods to clean-up the F trace
     def sgolay_detrend(self, f):
         '''
@@ -499,6 +403,7 @@ class postProcess():
 
         return f_detrended, sn
 
+    # method to denoise data, do not use before OASIS
     def emd_denoise(self, f):
         '''
         Runs empirical mode decomposition (EMD) to separate non-sinosoidal 'f' signals into separate mode functions (similar to fourier transform)
@@ -669,864 +574,972 @@ class postProcess():
                 
         '''
 
+    # -- these can probably be deleted -- #
+    def estimate_foopsi_lags(self):
+        import numpy as np
+        from sklearn.metrics import mean_squared_error
 
-    # -- methods to rescue and reject cells -- #
-    def rescue_and_reject(iscell, compact, skF, asymmetry):
-        '''
-        This code rescues candidate false rejection cells based on high skew and low compactness,
-        then rejects cells with low asymmetry
-
-        John Stout
-        '''
+        def foopsi(f_detrended, sn, lags):
+            # Fit the AR model with the specified lag
+            c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
+                                                            noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, 
+                                                            fudge_factor = 1, solvers=None, verbosity=True)
+            print(f"lags={lags}")
+            return c
         
-        # rescue non-cells - these criterion are largely good
-        rescued_cells = np.where(np.logical_and.reduce([iscell==False, compact <= 1.05, skF > 2.0]))[0]
+        # a function to estimation BIC
+        def calculate_bic(f_detrended, sn, lags):
+            '''
+            CoPilot put this together with tweaks by JS :)
+            '''
+            print(f"Running constrained foopsi on lags={lags}")
 
-        # send forward
-        iscell[rescued_cells]=True
-
-        # rejection time - this actually seems to capture non-asymettrical cells but also
-        # really noisy cells because the event peaks are poorly estimated
-        asymmetry_cutoff = 0.4 # after finding cases of good cells > .4 but bad <=.4
-        rejected_cells = np.where(asymmetry <= asymmetry_cutoff)[0]
-        iscell[rejected_cells]=False
-
-        return iscell
-
-    # method to detect event half-width
-    def event_decay(F, Fneu, C, fs = 7.5):
-        from scipy.signal import find_peaks
-        from scipy.stats import zscore
-
-        # neuropil correct
-        Fcor = F-Fneu
-
-        assymmetry = []
-        for celli in range(C.shape[0]):
-
-            # get example traces
-            c = C[celli]
-            f = Fcor[celli]
-
-            # detect event peaks
-            cZ              = zscore(c)
-            idx_peaks, prop = find_peaks(cZ)
-            c_peaks         = cZ[idx_peaks]          # find C trace events that are also peaks
-            c_filt_idx      = np.where(c_peaks > 1)  # find C trace events that are also peaks but also greater than 1std
-            idx_peaks       = idx_peaks[c_filt_idx]  # 
-            c_peaks         = c_peaks[c_filt_idx]    # 
-            F_peaks         = f[idx_peaks] # event peaks
-
-            # Initialize decay times
-            decay_left_times = []
-            decay_right_times = []
-            cell_assymmetry = []
-
-            # Loop over events and detect decay
-            for idx, peak_value in zip(idx_peaks, F_peaks):
-
-                # Define the decay threshold (e.g., 50% of peak value)
-                decay_threshold = peak_value * 0.5
-
-                # Search for decay before the peak
-                left_indices = np.where(f[:idx] <= decay_threshold)[0]
-                if len(left_indices) > 0:
-                    decay_left = left_indices[-1]
-                    decay_left_times.append(decay_left)
-
-                # Search for decay after the peak
-                right_indices = np.where(f[idx:] <= decay_threshold)[0]
-                if len(right_indices) > 0:
-                    decay_right = idx + right_indices[0]
-                    decay_right_times.append(decay_right)
-
-                # offset
-                right_sided = np.abs((idx-decay_right) / fs)
-                left_sided = np.abs((idx-decay_left) / fs)
-                cell_assymmetry.append(right_sided-left_sided)
-
-            # take the median of the assymmetry metric
-            assymmetry.append(np.median(np.array(cell_assymmetry)))
-
-        # make into numpy
-        assymmetry = np.array(assymmetry)
-        return assymmetry
-
-        # -- these can probably be deleted -- #
-        def estimate_foopsi_lags(self):
-            import numpy as np
-            from sklearn.metrics import mean_squared_error
-
-            def foopsi(f_detrended, sn, lags):
-                # Fit the AR model with the specified lag
-                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
-                                                                noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, 
-                                                                fudge_factor = 1, solvers=None, verbosity=True)
-                print(f"lags={lags}")
-                return c
+            # Fit the AR model with the specified lag
+            c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
+                                                            noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, sn=sn,
+                                                            fudge_factor = 1, solvers=None, verbosity=True)
             
-            # a function to estimation BIC
-            def calculate_bic(f_detrended, sn, lags):
-                '''
-                CoPilot put this together with tweaks by JS :)
-                '''
-                print(f"Running constrained foopsi on lags={lags}")
+            # Calculate the mean squared error
+            mse = mean_squared_error(f_detrended, c + bl)
 
-                # Fit the AR model with the specified lag
-                c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = 'oasis', bas_nonneg = True,
-                                                                noise_range = [0.25, 0.5], noise_method = 'logmexp', lags = lags, sn=sn,
-                                                                fudge_factor = 1, solvers=None, verbosity=True)
-                
-                # Calculate the mean squared error
-                mse = mean_squared_error(f_detrended, c + bl)
+            # Number of parameters in the model (lags + 1 for the intercept)
+            num_params = lags + 1
 
-                # Number of parameters in the model (lags + 1 for the intercept)
-                num_params = lags + 1
+            # Calculate the BIC
+            n = len(f_detrended)
+            bic = n * np.log(mse) + num_params * np.log(n)
 
-                # Calculate the BIC
-                n = len(f_detrended)
-                bic = n * np.log(mse) + num_params * np.log(n)
+            return bic
 
-                return bic
+        # hardcoded max lags
+        max_lags = 6 # visual inspection reveal some overfitting at lag=20, so cap it here
 
-            # hardcoded max lags
-            max_lags = 6 # visual inspection reveal some overfitting at lag=20, so cap it here
+        # loop across cells, detrend, calculate BIC with via constrained_foopsi
+        process_start = time.process_time(); best_lags = []; bic_vals_all = []
+        for x in range(self.F.shape[0]):
 
-            # loop across cells, detrend, calculate BIC with via constrained_foopsi
-            process_start = time.process_time(); best_lags = []; bic_vals_all = []
-            for x in range(self.F.shape[0]):
+            # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
+            # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
+            f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
 
-                # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
-                # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
-                f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
+            # Range of possible lags to test
+            lag_range = range(1, max_lags+1)
 
-                # Range of possible lags to test
-                lag_range = range(1, max_lags+1)
+            # Calculate BIC for each lag
+            process_start = time.process_time()
+            #bic_values = [calculate_bic(f_detrended, sn, lag) for lag in lag_range]
+            Cout = [foopsi(f_detrended=f_detrended, sn=sn, lags=lagi) for lagi in lag_range]
+            Cout = np.array(Cout)
+            print("Time to estimate BIC per each lag:",(time.process_time() - process_start)/60,"min")    
 
-                # Calculate BIC for each lag
-                process_start = time.process_time()
-                #bic_values = [calculate_bic(f_detrended, sn, lag) for lag in lag_range]
-                Cout = [foopsi(f_detrended=f_detrended, sn=sn, lags=lagi) for lagi in lag_range]
-                Cout = np.array(Cout)
-                print("Time to estimate BIC per each lag:",(time.process_time() - process_start)/60,"min")    
-
-                
-
-                # Find the lag with the lowest BIC
-                #best_lag = lag_range[np.argmin(bic_values)]
-                #print(f"The best lag value is: {best_lag}")
-
-                # save
-                #best_lags.append(best_lag)
-                #bic_vals_all.append(bic_values)
-    
-        def random_peak_generator():
-            import numpy as np
-            import matplotlib.pyplot as plt
-
-            # Length of the signal
-            length = 60000
-
-            # Create a base random signal
-            signal = np.random.randn(length)
-
-            # Parameters for peak events
-            num_peaks = 50
-            peak_duration = 60
-            initial_peak_magnitude = 20  # Starting magnitude of peaks
-            final_peak_magnitude = 1     # Ending magnitude of peaks
-
-            # Linear decay factor for peak magnitudes
-            peak_magnitudes = np.linspace(initial_peak_magnitude, final_peak_magnitude, num_peaks)
-
-            # Evenly spaced peak start indices
-            start_indices = np.linspace(0, length - peak_duration, num_peaks).astype(int)
-
-            # Generate peak events with linearly decaying magnitudes
-            for i, start_idx in enumerate(start_indices):
-                # Create a peak event with linearly decaying magnitude
-                peak_event = np.ones(peak_duration) * peak_magnitudes[i]
-                
-                # Add the peak event to the signal
-                signal[start_idx:start_idx + peak_duration] += peak_event
-
-            # Plot the resulting signal
-            plt.figure(figsize=(12, 4))
-            plt.plot(signal, 'k', linewidth=0.5)
-            plt.title('Random Signal with Linearly Decaying Peak Events')
-            plt.xlabel('Sample Index')
-            plt.ylabel('Signal Amplitude')
-            plt.show()
-
-            return signal
-
-
-
-
-
-
-        def event_width(self, c):
-            pass
-
-        # saves the maxprojection output generated by suite2p
-        def save_maxproj_s2p(fpath: str):
-            '''
-            Function that saves out the max projection image from suite2p, saved as a .tif.
-            The saved location will be outside of the suite2p folder
-
-            Args:
-                >>> fpath: path to your suite2p folder
             
-            '''
-            # read data
-            F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath)
 
-            # get summary images
-            max_proj  = ops['max_proj']
-            mean_img  = ops['meanImg']
-            mean_imgE = ops['meanImgE']
+            # Find the lag with the lowest BIC
+            #best_lag = lag_range[np.argmin(bic_values)]
+            #print(f"The best lag value is: {best_lag}")
 
-            # save outputs
-            if os.path.split(fpath)[-1] == 'suite2p':
-                # eventually make this code a loop that loops over the various planes
-                fpath = os.path.split(fpath)[0]
-            elif os.path.split(fpath)[-1] == 'plane0':
-                fpath = os.path.split(os.path.split(fpath)[0])[0]
+            # save
+            #best_lags.append(best_lag)
+            #bic_vals_all.append(bic_values)
 
-            print("Writing summary images to",fpath)
-            tf.imwrite(os.path.join(fpath,'max_proj.tif'),
-                    max_proj)
-            tf.imwrite(os.path.join(fpath,'mean_img.tif'),
-                    mean_img)
-            tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
-                    mean_imgE)
+    def random_peak_generator():
+        import numpy as np
+        import matplotlib.pyplot as plt
 
-    # method for ROI classification
-    def classify_roi(self):
-        from sklearn.svm import SVC
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import accuracy_score
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.decomposition import PCA
-        from caimanfuns import compute_event_exceptionality
+        # Length of the signal
+        length = 60000
 
-        import pandas as pd
-        from sklearn.svm import SVC
-        from sklearn.model_selection import train_test_split, cross_val_score
-        from sklearn.metrics import accuracy_score
-        from scipy.ndimage import gaussian_filter, gaussian_filter1d
-        from scipy import stats
-        from scipy.stats import norm
-        from scipy import special
+        # Create a base random signal
+        signal = np.random.randn(length)
 
-        # pnr
-        def pnr(F, Fneu):
+        # Parameters for peak events
+        num_peaks = 50
+        peak_duration = 60
+        initial_peak_magnitude = 20  # Starting magnitude of peaks
+        final_peak_magnitude = 1     # Ending magnitude of peaks
 
-            # Calculate 95th percentiles
-            pk95F = np.percentile(np.sort(np.abs(F), axis=1), 95, axis=1)
-            pk95N = np.percentile(np.sort(np.abs(Fneu), axis=1), 95, axis=1)
+        # Linear decay factor for peak magnitudes
+        peak_magnitudes = np.linspace(initial_peak_magnitude, final_peak_magnitude, num_peaks)
 
-            # Calculate PNR (peak noise ratio)
-            pnr = pk95F / pk95N
+        # Evenly spaced peak start indices
+        start_indices = np.linspace(0, length - peak_duration, num_peaks).astype(int)
 
-            print(f'PNR: {pnr}')
-            return pnr
+        # Generate peak events with linearly decaying magnitudes
+        for i, start_idx in enumerate(start_indices):
+            # Create a peak event with linearly decaying magnitude
+            peak_event = np.ones(peak_duration) * peak_magnitudes[i]
+            
+            # Add the peak event to the signal
+            signal[start_idx:start_idx + peak_duration] += peak_event
 
-        # Initialize an empty DataFrame
-        def gather_classifier_data(classifier_sessions: list):
+        # Plot the resulting signal
+        plt.figure(figsize=(12, 4))
+        plt.plot(signal, 'k', linewidth=0.5)
+        plt.title('Random Signal with Linearly Decaying Peak Events')
+        plt.xlabel('Sample Index')
+        plt.ylabel('Signal Amplitude')
+        plt.show()
 
-            df_all = pd.DataFrame(); F_all = []
-            for sessi in classifier_sessions:
-                fpath = sessi
-                print("Working on",sessi)
+        return signal
 
-                # squirrel mouse name
-                mouseName = os.path.split(fpath)[-1].split('_')[0]
+    # saves the maxprojection output generated by suite2p
+    def save_maxproj_s2p(fpath: str):
+        '''
+        Function that saves out the max projection image from suite2p, saved as a .tif.
+        The saved location will be outside of the suite2p folder
 
-                # load data
-                F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
-                C = np.load(os.path.join(fpath, 'suite2p', 'plane0', 'C.npy'), allow_pickle=True)
-                S = np.load(os.path.join(fpath, 'suite2p', 'plane0', 'S.npy'), allow_pickle=True)
+        Args:
+            >>> fpath: path to your suite2p folder
+        
+        '''
+        # read data
+        F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath)
 
-                # make mouseName variable 
-                mouseName_array = np.array([mouseName] * F.shape[0])
+        # get summary images
+        max_proj  = ops['max_proj']
+        mean_img  = ops['meanImg']
+        mean_imgE = ops['meanImgE']
 
-                # Detrend F and neuropil
-                #Fdet = detrend_signal(F=F)
-                #Ndet = detrend_signal(F=Fneu)
+        # save outputs
+        if os.path.split(fpath)[-1] == 'suite2p':
+            # eventually make this code a loop that loops over the various planes
+            fpath = os.path.split(fpath)[0]
+        elif os.path.split(fpath)[-1] == 'plane0':
+            fpath = os.path.split(os.path.split(fpath)[0])[0]
 
-                # baseline operation
-                Ndet = dcnv.preprocess(
-                    F=Fneu,
-                    baseline=ops['baseline'],
-                    win_baseline=ops['win_baseline'],
-                    sig_baseline=ops['sig_baseline'],
-                    fs=ops['fs'],
-                    prctile_baseline=ops['prctile_baseline']
-                )
+        print("Writing summary images to",fpath)
+        tf.imwrite(os.path.join(fpath,'max_proj.tif'),
+                max_proj)
+        tf.imwrite(os.path.join(fpath,'mean_img.tif'),
+                mean_img)
+        tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
+                mean_imgE)
 
-                # Run skew
-                skF = stats.skew(blF, axis=1)
-                skN = stats.skew(Ndet, axis=1)
+# can inherit the __init__ from postProcess
+class classifyCells():
 
-                # SNR
-                varF = np.var(blF, axis=1)
-                varN = np.var(Ndet, axis=1)
-                snr = varF / varN
+    def __init__(self, load_svm: bool = False, training_sessions_directory: str = None):
+        '''
+        Args:
+            >>> training_session_directory: contains a directory of folders with suite2p/plane0 files to train the model on
+        '''
 
-                # Correlate F to C
-                smoothF = gaussian_filter1d(blF, sigma=7.5*2, axis=1)
-                correlation = np.array([np.corrcoef(smoothF[i], C[i])[0, 1] for i in range(smoothF.shape[0])])
+        # TODO add a mechanism to load an svm model
+        if load_svm == False:
+            all_dir = rootfun.list_all_subdirs(training_sessions_directory)
+            self.training_sessions = [i for i in all_dir if 'suite2p' in i and 'plane' in i]
 
-                # Fitness, traces == C
-                fitness, erfc, sd_r, md = compute_event_exceptionality(traces=blF)
+            # gather data to train svm
+            self.df_train = self.gather_classifier_data(classifier_sessions=self.training_sessions)
 
-                # Number of timesteps to consider when testing new neuron candidates
-                min_SNR = 2.5
-                min_SNR_reject = 0.5
-                decay_time = 0.7
-                frate = 7.5
-                N_samples = np.ceil(frate * decay_time).astype(int)
+            # build the classifier
+            self.svc, self.scaler, self.selected_features, self.pca, self.n_components, self.idx_rem = self.build_classifier(auto_feature_select = False, preset_features = True)
 
-                # Inclusion probability of noise transient
-                thresh_fitness_raw = special.log_ndtr(-min_SNR) * N_samples
+    # build classifier
+    def build_classifier(self, auto_feature_select = True, preset_features = False, preferred_features = None):
+        '''
+        Args:
+            >>> training_session_directory: contains a directory of folders with suite2p/plane0 files to train the model on
+        '''
 
-                # Threshold on time variability
-                fitness_min = special.log_ndtr(-min_SNR) * N_samples
+        # sanity check
+        assert auto_feature_select != preset_features, "You cannot set auto_feature_select and preset_features as both True or both False"
 
-                # Components with SNR lower than 0.5 will be rejected
-                thresh_fitness_raw_reject = special.log_ndtr(-min_SNR_reject) * N_samples
-                comp_SNR = -norm.ppf(np.exp(fitness / N_samples))
+        # cleanup data
+        df_clean, idx_rem = self.cleanup_classifier_data(df_all=self.df_train)
 
-                # PNR
-                pnr_data = pnr(F=blF, Fneu=Ndet)
+        # Assuming df_all is already created and has the necessary columns
+        # Split into features (X) and labels (y)
+        X = df_clean.drop(columns=['iscell', 'mouseName'])
+        y = df_clean['iscell']
 
-                # Get classifier stats
-                npix_norm = np.array([i['npix_norm'] for i in stat])
-                compact = np.array([i['compact'] for i in stat])
-                aspect = np.array([i['aspect_ratio'] for i in stat]) # aspect ratio is how elongated a component is
+        # preselected features
+        if preset_features == True and preferred_features is None:
 
-                # Create a DataFrame for the current session
-                df_session = pd.DataFrame(data={
-                    'mouseName': mouseName_array,
-                    'iscell': iscell,  # Ensure correct shape
-                    'snr': snr,
-                    'skewF': skF,
-                    'skewN': skN,
-                    'corr': correlation,
-                    'fitness': fitness,
-                    'sd_r': sd_r,
-                    'md': md,
-                    'pnr': pnr_data,
-                    'npix_norm': npix_norm, #added
-                    'compact': compact, # added
-                    'aspect_ratio': aspect, # added
-                    'comp_SNR': comp_SNR
-                })
+            # using this feature list, extract from df
+            feature_list = ['comp_SNR', 'skewF', 'fitness', 'sd_r', 'corr', 'compact', 'npix_norm']
+            print("Using preset feature_list:",feature_list)
+            selected_features = feature_list
+            X = X[feature_list]
 
-                # Append the current session DataFrame to the main DataFrame
-                df_all = pd.concat([df_all, df_session], ignore_index=True)
+        # get number of components
+        n_components = X.shape[1]
 
-                # save F
-                F_all.append(F)
+        # Split into training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
 
-            return df_all
+        # Synthetic Minority Oversampling Technique: creates synthetic values by interpolating between data points in
+        # order to balance out the training dataset. Note that this isn't used for testing.
+        from imblearn.over_sampling import SMOTE
+        smote = SMOTE(random_state=42)
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
 
-        # function to remove nan/inf values
-        def cleanup_classifier_data(df_all):
+        # rescale the data
+        print("Rescaling data...")
+        scaler  = StandardScaler()
+        X_train = scaler.fit_transform(X_train_resampled) # fit and transform X_train using mean and std of X-mean
+        X_test  = scaler.transform(X_test) # transform X_test using mean and std of X_train
 
-            # identify nan or inf values
-            df_all.replace([np.inf, -np.inf], np.nan, inplace=True)
-            idx_rem = df_all.index[df_all.isna().any(axis=1)]
+        # use recursive feature elimination to identify the best candidate features for classification
+        if auto_feature_select == True:
+            print("Automatically detecting which features to use for classification")
 
-            for i in idx_rem:
-                print(f'Detected and removed NaN at: {i}')
+            # train a temporary classifier on the initial scaled dataset
+            svc_rfe = SVC(kernel='linear', C=1, gamma=0.1, class_weight='balanced')
 
-            # remove them
-            df_clean = df_all.drop(idx_rem)
+            # use cross-validation to identify the number of features to use for recursive feature elimination
+            scores = []
 
-            return df_clean
-
-        # build classifier
-        def build_classifier(df_all, auto_feature_select = True, preset_features = False):
-            '''
-            Build classifier
-            '''
-            from sklearn.feature_selection import RFE
-            from sklearn.metrics import classification_report, confusion_matrix
-            import matplotlib.pyplot as plt
-
-            # sanity check
-            assert auto_feature_select != preset_features, "You cannot set auto_feature_select and preset_features as both True or both False"
-
-            # cleanup data
-            df_clean = cleanup_classifier_data(df_all = df_all)
-
-            # Assuming df_all is already created and has the necessary columns
-            # Split into features (X) and labels (y)
-            X = df_clean.drop(columns=['iscell', 'mouseName'])
-            y = df_clean['iscell']
-
-            # preselected features
-            if preset_features == True:
-
-                # using this feature list, extract from df
-                feature_list = ['comp_SNR', 'skewF', 'fitness', 'sd_r', 'corr', 'compact', 'npix_norm', 'aspect_ratio']
-                print("Using preset feature_list:",feature_list)
-                selected_features = feature_list
-                X = X[feature_list]
-
-            # get number of components
-            n_components = X.shape[1]
-
-            # Split into training and testing sets
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
-
-            # rescale the data
-            print("Rescaling data...")
-            scaler  = StandardScaler()
-            X_train = scaler.fit_transform(X_train) # fit and transform X_train using mean and std of X-mean
-            X_test  = scaler.transform(X_test) # transform X_test using mean and std of X_train
-
-            # Evaluate RFE for a range of n_features_to_select values
-            if auto_feature_select == True:
-                print("Automatically detecting which features to use for classification")
-
-                # train a temporary classifier on the initial scaled dataset
-                svc_rfe = SVC(kernel='linear', C=1, gamma=0.1, class_weight='balanced')
-
-                # use cross-validation to identify the number of features to use for recursive feature elimination
-                scores = []
-
-                for n in range(1, X_train.shape[1] + 1):
-                    rfe = RFE(estimator=svc_rfe, n_features_to_select=n)
-                    rfe.fit(X_train, y_train)
-                    score = cross_val_score(rfe, X_train, y_train, cv=5).mean()
-                    scores.append(score)
-                    print(f'Performance at {n} features: {score}')
-
-                # Plot cross-validation scores
-                plt.plot(range(1, X_train.shape[1] + 1), scores)    
-                plt.axhline(y=np.max(scores), color='r', linestyle='--')
-                plt.axvline(x=np.argmax(scores)+1, color='r', linestyle='--')
-                plt.xlabel('# Features')
-                plt.ylabel('Cross-Validation Score')
-                plt.show()
-
-                # Optimal number of features
-                optimal_n_features = scores.index(max(scores)) + 1
-                print(f'Optimal number of features: {optimal_n_features}')
-
-                # using recursive feature elimination, identify the most relevant features
-                rfe = RFE(estimator=svc_rfe, n_features_to_select=optimal_n_features)
+            for n in range(1, X_train.shape[1] + 1):
+                rfe = RFE(estimator=svc_rfe, n_features_to_select=n)
                 rfe.fit(X_train, y_train)
-                selected_features = X.columns[rfe.support_]
-                print("Selected features:", selected_features)
-                X_train = X_train[:, rfe.support_]
-                X_test  = X_test[:, rfe.support_]
+                score = cross_val_score(rfe, X_train, y_train, cv=5).mean()
+                scores.append(score)
+                print(f'Performance at {n} features: {score}')
 
-            # run PCA to transform the dataset into non-correlated variables
-            print("Running PCA...")
-            n_components = X_train.shape[1]-1 #n-1 PCs
-            pca          = PCA(n_components=n_components)
-            X_train      = pca.fit_transform(X_train) # calculate PCs from training data
-            X_test       = pca.transform(X_test)      # uses the same PCs from the training data, applied to testing data
-
-            # estimate # of PCs to use based on cumulative explained variance
-            cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-            plt.plot(cumulative_variance)
-            plt.xlabel('Number of Principal Components')
-            plt.ylabel('Cumulative Explained Variance')
-            plt.axhline(y=0.95, color='r', linestyle='--')
-            plt.axvline(x=np.where(cumulative_variance >= 0.95)[0][0], color='r', linestyle='--')
-            plt.title('Explained Variance by Principal Components')
+            # Plot cross-validation scores
+            plt.plot(range(1, X_train.shape[1] + 1), scores)    
+            plt.axhline(y=np.max(scores), color='r', linestyle='--')
+            plt.axvline(x=np.argmax(scores)+1, color='r', linestyle='--')
+            plt.xlabel('# Features')
+            plt.ylabel('Cross-Validation Score')
             plt.show()
 
-            # Number of components to retain 95% variance
-            n_components = np.where(cumulative_variance >= 0.95)[0][0] + 1
-            print(f'Number of components to retain 95% variance: {n_components}')
+            # Optimal number of features
+            optimal_n_features = scores.index(max(scores)) + 1
+            print(f'Optimal number of features: {optimal_n_features}')
 
-            # PCs to keep
-            print("Cleaned up X_train and X_test accordingly...")
-            X_train = X_train[:, 0:n_components]
-            X_test  = X_test[:, 0:n_components]
+            # using recursive feature elimination, identify the most relevant features
+            rfe = RFE(estimator=svc_rfe, n_features_to_select=optimal_n_features)
+            rfe.fit(X_train, y_train)
+            selected_features = X.columns[rfe.support_]
+            print("Selected features:", selected_features)
+            X_train = X_train[:, rfe.support_]
+            X_test  = X_test[:, rfe.support_]
 
-            # Initialize the SVC classifier
-            svc = SVC(kernel='linear', C=1, gamma=0.1, class_weight='balanced', probability=True)
+        # run PCA to transform the dataset into non-correlated variables
+        print("Running PCA...")
+        n_components = X_train.shape[1]-1 #n-1 PCs
+        pca          = PCA(n_components=n_components)
+        X_train      = pca.fit_transform(X_train) # calculate PCs from training data
+        X_test       = pca.transform(X_test)      # uses the same PCs from the training data, applied to testing data
 
-            # Train the model
-            svc.fit(X_train, y_train)
+        # estimate # of PCs to use based on cumulative explained variance
+        cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+        plt.plot(cumulative_variance)
+        plt.xlabel('# Principal Components')
+        plt.ylabel('Cum. Variance')
+        plt.axhline(y=0.95, color='r', linestyle='--')
+        plt.axvline(x=np.where(cumulative_variance >= 0.95)[0][0], color='r', linestyle='--')
+        plt.show()
 
-            # Get support vectors
-            sv = svc.support_vectors_
-            sv_labels = svc.dual_coef_.ravel() > 0
+        # Number of components to retain 95% variance
+        n_components = np.where(cumulative_variance >= 0.95)[0][0] + 1
+        print(f'# of components to retain 95% variance: {n_components}')
 
-            # Make predictions on the test set
-            y_pred = svc.predict(X_test)
+        # PCs to keep
+        print("Cleaned up X_train and X_test accordingly...")
+        X_train = X_train[:, 0:n_components]
+        X_test  = X_test[:, 0:n_components]
 
-            # Evaluate the model on the entire test set
-            accuracy = accuracy_score(y_test, y_pred)
-            print(f'Accuracy on entire test set: {accuracy}')
+        # Initialize the SVC classifier
+        svc = SVC(kernel='linear', C=1, gamma=0.1, class_weight='balanced', probability=True)
 
-            # Evaluate accuracy on accepted components (true)
-            accepted_indices = np.where(y_test == True)[0]
-            accuracy_accepted = accuracy_score(y_test.iloc[accepted_indices], y_pred[accepted_indices])
-            print(f'Accuracy on accepted components (true): {accuracy_accepted}')
+        # Train the model
+        svc.fit(X_train, y_train_resampled) # X_train is the resampled version
 
-            # performance on rejected components
-            rejected_indices = np.where(y_test == False)[0]
-            accuracy_rejected = accuracy_score(y_test.iloc[rejected_indices], y_pred[rejected_indices])
-            print(f'Accuracy on rejected components (false): {accuracy_rejected}')
+        # Get support vectors
+        sv = svc.support_vectors_
+        sv_labels = svc.dual_coef_.ravel() > 0
 
-            # Evaluate the model
-            #print(confusion_matrix(y_test, y_pred))
-            print("________________________________________________________________")
-            print(classification_report(y_test, y_pred))
-            print("________________________________________________________________")
+        # Make predictions on the test set
+        y_pred = svc.predict(X_test)
 
-            return svc, scaler, selected_features, pca, n_components
+        # Evaluate the model on the entire test set
+        accuracy = accuracy_score(y_test, y_pred)
+        print(f'Accuracy on entire test set: {accuracy}')
 
-        # todo:
-        def build_activity_classifier():
-            pass
+        # Evaluate accuracy on accepted components (true)
+        accepted_indices = np.where(y_test == True)[0]
+        accuracy_accepted = accuracy_score(y_test.iloc[accepted_indices], y_pred[accepted_indices])
+        print(f'Accuracy on accepted components (true): {accuracy_accepted}')
 
-        def build_anatomy_classifier():
-            pass
+        # performance on rejected components
+        rejected_indices = np.where(y_test == False)[0]
+        accuracy_rejected = accuracy_score(y_test.iloc[rejected_indices], y_pred[rejected_indices])
+        print(f'Accuracy on rejected components (false): {accuracy_rejected}')
 
-        # Example of using the trained model on new unseen data
-        def predict_cell(df_predict, svc, scaler, selected_features, pca, n_components):
-            '''
-            Using the training svm from build_classifier, predict whether a cell is a cell
-            '''
+        # Evaluate the model
+        #print(confusion_matrix(y_test, y_pred))
+        print("________________________________________________________________")
+        print(classification_report(y_test, y_pred))
+        print("________________________________________________________________")
 
-            # TODO check the n_component
+        return svc, scaler, selected_features, pca, n_components, idx_rem
 
-            # cleanup data
-            df_clean = cleanup_classifier_data(df_all = df_predict)
+    # Initialize an empty DataFrame
+    def gather_classifier_data(self, classifier_sessions):
 
-            # Assuming df_all is already created and has the necessary columns
-            # Split into features (X) and labels (y)
-            X = df_clean.drop(columns=['iscell', 'mouseName'])
-            X = X[selected_features]
+        # load and organize data
+        df_all = pd.DataFrame(); F_all = []
+        for sessi in classifier_sessions:
+            fpath = sessi
+            print("Working on",sessi)
 
-            # standardize
-            X_scaled = scaler.transform(X)
-        
-            # filter out for features not selected using rfe on the training set
-            idx_features = [np.where(X.columns == i)[0][0] for i in selected_features]
-            X_filt = X_scaled[:, idx_features]
+            # squirrel mouse name
+            mouseName = os.path.split(os.path.split(os.path.split(fpath)[0])[0])[-1].split('_')[0]
 
-            # pca
-            X_pca = pca.transform(X_filt)
-            X_pca_filt = X_pca[:, 0:n_components]
+            # load data
+            F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
+            C = np.load(os.path.join(fpath, 'C.npy'), allow_pickle=True)
+            #S = np.load(os.path.join(fpath, 'suite2p', 'plane0', 'S.npy'), allow_pickle=True)
 
-            # binary predictions
-            predictions = svc.predict(X_pca_filt)
+            # make mouseName variable 
+            mouseName_array = np.array([mouseName] * F.shape[0])
 
-            # the decision-scores variable represents the distance of each feature from the hyperplane and can be interpreted as a confidence score
-            decision_scores = svc.decision_function(X_pca_filt)
+            # assert shape
+            assert C.shape==F.shape, "The shape of your C and F variables do not match. Rerun cleanup raw traces"
 
-            # probability represent the likelihood of a class 
-            probabilities = svc.predict_proba(X_pca_filt)
+            # baseline operation
+            Ndet = dcnv.preprocess(
+                F=Fneu,
+                baseline=ops['baseline'],
+                win_baseline=ops['win_baseline'],
+                sig_baseline=ops['sig_baseline'],
+                fs=ops['fs'],
+                prctile_baseline=ops['prctile_baseline']
+            )
 
-            return predictions, probabilities, decision_scores
+            # Run skew
+            skF = stats.skew(F-Fneu, axis=1)
+            skN = stats.skew(Ndet, axis=1)
 
-        # function that calls in the iscell variable and rewrites it according to predict_cell predictions
-        def rewrite_iscell(predict_sessions, predictions, probabilities):
-            for i in predict_sessions:
+            # SNR
+            varF = np.var(F-Fneu, axis=1)
+            varN = np.var(Ndet, axis=1)
+            snr = varF / varN
 
-                # read og iscell
-                iscell = np.load(os.path.join(i,'suite2p','plane0','iscell.npy'), allow_pickle=True)
-                
-                # rewrite
-                iscell_og = iscell.copy()
-                del iscell
+            # Correlate F to C
+            smoothF = gaussian_filter1d(F-Fneu, sigma=7.5*2, axis=1)
+            correlation = np.array([np.corrcoef(smoothF[i], C[i])[0, 1] for i in range(smoothF.shape[0])])
 
-                # rewrite iscell
-                iscell = np.zeros(iscell_og.shape)
-                iscell[predictions, 0] = 1.0
-                iscell[:, 1] = probabilities[:, 1]
+            # Fitness, traces == C
+            fitness, erfc, sd_r, md = compute_event_exceptionality(traces=F-Fneu)
 
-                # save
-                np.save(os.path.join(i, 'suite2p', 'plane0', 'iscell.npy'), iscell, allow_pickle=True)
-                np.save(os.path.join(i, 'suite2p', 'plane0', 'iscell_og.npy'), iscell_og, allow_pickle=True)
+            # Number of timesteps to consider when testing new neuron candidates
+            min_SNR        = 2.5
+            min_SNR_reject = 0.5
+            decay_time     = 0.7
+            frate          = 7.5
+            N_samples      = np.ceil(frate * decay_time).astype(int)
 
-            pass
+            # -- this is from CaImAns code to estimate an SNR -- #
 
-        # overlap remove
-        def overlap_trash(predicted_session):
+            # Inclusion probability of noise transient
+            thresh_fitness_raw = special.log_ndtr(-min_SNR) * N_samples
 
-            '''
-            Use the correlation between C variables and overlap variables to identify candidate cells that should be tossed or merged.
+            # Threshold on time variability
+            fitness_min = special.log_ndtr(-min_SNR) * N_samples
 
-            Rather than merging, keep the cell with the strongest skew and most compactness
+            # Components with SNR lower than 0.5 will be rejected
+            thresh_fitness_raw_reject = special.log_ndtr(-min_SNR_reject) * N_samples
+            comp_SNR = -norm.ppf(np.exp(fitness / N_samples))
 
+            # --------------------------------------------------- #
+
+            # PNR
+            pnr_data = pnr(F=F-Fneu, Fneu=Ndet)
+
+            # Get classifier stats
+            npix_norm = np.array([i['npix_norm'] for i in stat])
+            npix      = np.array([i['npix'] for i in stat])
+            compact   = np.array([i['compact'] for i in stat])
+            aspect    = np.array([i['aspect_ratio'] for i in stat]) # aspect ratio is how elongated a component is
+
+            # --- Some important filtering and rescuing steps -- #
+
+            # calculate the median asymmetry of the F signal
+            asymmetry = get_asymmetry(F = F, Fneu = Fneu, C = C, fs = 7.5)
+
+            # identify "not cells" that have low compactness and high skew, then send them to "is cell" category
+            iscell = reject_cell(iscell=iscell, stat=stat, compact=compact, skF=skF, asymmetry=asymmetry)
+
+            # find cells near one another amongst the true positives, then if strongly correlated, remove the weaker signal
+            iscell = reject_overlapping_roi(stat=stat, F=F, Fneu=Fneu, C=C, iscell=iscell, fs=7.5)
+
+            # Create a DataFrame for the current session
+            df_session = pd.DataFrame(data={
+                'mouseName': mouseName_array,
+                'iscell': iscell,  # Ensure correct shape
+                'snr': snr,
+                'skewF': skF,
+                'skewN': skN,
+                'corr': correlation,
+                'fitness': fitness,
+                'sd_r': sd_r,
+                'md': md,
+                'pnr': pnr_data,
+                'npix_norm': npix_norm, #added
+                'npix': npix,
+                'compact': compact, # added
+                #'aspect_ratio': aspect, # added
+                'comp_SNR': comp_SNR,
+                'asymmetry': asymmetry # added
+            })
+
+            # Append the current session DataFrame to the main DataFrame
+            df_all = pd.concat([df_all, df_session], ignore_index=True)
+
+            # save F
+            F_all.append(F)
+
+        # cache
+        return df_all
+
+    # function to remove nan/inf values
+    def cleanup_classifier_data(self, df_all):
+
+        # identify nan or inf values
+        df_all.replace([np.inf, -np.inf], np.nan, inplace=True)
+        idx_rem = df_all.index[df_all.isna().any(axis=1)]
+
+        for i in idx_rem:
+            print(f'Detected and removed NaN at: {i}')
+
+        # remove them
+        df_clean = df_all.drop(idx_rem)
+
+        # store
+        df_clean = df_clean
+        idx_rem = idx_rem
+
+        return df_clean, idx_rem
+
+    # Example of using the trained model on new unseen data
+    def predict_cell(self, df_predict, svc, scaler, selected_features, pca, n_components):
+        '''
+        Using the training svm from build_classifier, predict whether a cell is a cell
+        '''
+
+        # TODO check the n_component
+        # only run the classifier on cells already deemed "cells"
+        #df_predict_cell = df_predict[df_predict['iscell']==True]
+
+        # cleanup data
+        df_clean, idx_rem = self.cleanup_classifier_data(df_all = df_predict)
+
+        # Assuming df_all is already created and has the necessary columns
+        # Split into features (X) and labels (y)
+        X = df_clean.drop(columns=['iscell', 'mouseName'])
+        X = X[selected_features]
+
+        # standardize
+        X_scaled = scaler.transform(X)
+    
+        # filter out for features not selected using rfe on the training set
+        idx_features = [np.where(X.columns == i)[0][0] for i in selected_features]
+        X_filt = X_scaled[:, idx_features]
+
+        # pca
+        X_pca = pca.transform(X_filt)
+        X_pca_filt = X_pca[:, 0:n_components]
+
+        # binary predictions
+        predictions = svc.predict(X_pca_filt)
+
+        # the decision-scores variable represents the distance of each feature from the hyperplane and can be interpreted as a confidence score
+        decision_scores = svc.decision_function(X_pca_filt)
+
+        # probability represent the likelihood of a class 
+        probabilities = svc.predict_proba(X_pca_filt)
+
+        # replace the removed cells and set them to false
+        if len(idx_rem) > 0:
+            print(f'Detected removed cells {idx_rem}, replacing with 0.0 or False in classification array')
+            final_probabilities = np.empty((len(probabilities) + len(idx_rem), probabilities.shape[1]), dtype=object)
+            final_predictions   = np.empty(len(predictions) + len(idx_rem), dtype=object)
+            final_scores        = np.empty(len(decision_scores) + len(idx_rem), dtype=object)
+
+            # Initialize pointers for the probabilities and final_probabilities arrays
+            prob_idx = 0; final_idx = 0
+
+            # Fill the final_probabilities array with shifting
+            for i in range(final_probabilities.shape[0]):
+                if final_idx in idx_rem:
+                    final_probabilities[final_idx] = 0.0
+                    final_scores[final_idx] = 0.0
+                    final_predictions[final_idx] = False
+                else:
+                    final_probabilities[final_idx] = probabilities[prob_idx]
+                    final_scores[final_idx] = decision_scores[prob_idx]
+                    final_predictions[final_idx] = predictions[prob_idx]
+                    prob_idx += 1
+                final_idx += 1
+
+            # change to bool
+            final_probabilities=final_probabilities.astype(bool)
+
+            # rename
+            del predictions, probabilities, decision_scores
+            predictions = final_predictions
+            probabilities = final_probabilities
+            decision_scores = final_scores
+
+        return predictions.astype(bool), probabilities, decision_scores
+
+    # function that calls in the iscell variable and rewrites it according to predict_cell predictions
+    def rewrite_data(self, predict_sessions, predictions, probabilities):
+        import scipy.io as sio
+        from datetime import datetime
+
+        for i in predict_sessions:
             
-            '''
-            from scipy.stats import pearsonr
+            # read og iscell
+            F, Fneu, spks, stat, ops, iscell0, __ = read_s2p(fpath=i)
+            C = np.load(os.path.join(i, 'C.npy'), allow_pickle=True)
+            S = np.load(os.path.join(i, 'S.npy'), allow_pickle=True)
+            iscell = np.load(os.path.join(i,'iscell.npy'), allow_pickle=True)
 
-            # predicted session
-            predicted_session = sessi
+            # rewrite
+            iscell_og = iscell.copy()
+            del iscell
 
-            # load the stat and C variables
-            F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=predicted_session)
-            C = np.load(os.path.join(predicted_session, 'suite2p', 'plane0', 'C.npy'), allow_pickle=True)
-            S = np.load(os.path.join(predicted_session, 'suite2p', 'plane0', 'S.npy'), allow_pickle=True)
+            # rewrite iscell
+            iscell = np.zeros(iscell_og.shape)
+            iscell[predictions, 0] = 1.0
+            iscell[:, 1] = probabilities[:, 1]
 
-            # only include stat that are cells
-            stat = stat[iscell==True]
+            # --- Some important filtering and rescuing steps -- #
+            iscell_in = iscell[:,0].astype(bool)
 
-            # search for cells with overlap
-            cells = len(stat)
-            for i in range(cells):
+            # compactness
+            compact = np.array([i['compact'] for i in stat])
 
-                # y and x pixels of comparative roi
-                ypix, xpix = stat[i]['ypix'], stat[i]['xpix']
-                pixels = set(zip(xpix, ypix))
+            # skew
+            skF = stats.skew(F-Fneu, axis=1)
 
-                # get signal
-                c_cell = C[i,:]
+            # calculate the median asymmetry of the F signal
+            asymmetry = get_asymmetry(F = F, Fneu = Fneu, C = C, fs = 7.5)
 
-                # loop over cells, but ignore the current cell
-                for ii in range(i + 1, cells):
+            # identify "not cells" that have low compactness and high skew, then send them to "is cell" category
+            iscell_out = reject_cell(iscell=iscell_in, stat=stat, compact=compact, skF=skF, asymmetry=asymmetry)
 
-                    # calculate the percentage of overlap
-                    ypix_comp, xpix_comp = stat[ii]['ypix'], stat[ii]['xpix']
+            # rescue - adds too much noise
+            #iscell_out = rescue_cell(iscell=iscell_out, stat=stat, skF=skF)
 
-                    # get signal
-                    c_comp = C[ii,:]
+            # find cells near one another amongst the true positives, then if strongly correlated, remove the weaker signal
+            iscell_out = reject_overlapping_roi(stat=stat, F=F, Fneu=Fneu, C=C, iscell=iscell_out, fs=7.5)
 
-                    # comparative pixels
-                    pixels_comp = set(zip(xpix_comp, ypix_comp))
+            # regenerate iscell. Note that we are replacing the iscell with iscell_out because iscell_out is processed probabilities from the classifier
+            del iscell
+            iscell = np.zeros(iscell_og.shape)
+            iscell[iscell_out, 0] = 1.0
+            iscell[:, 1] = probabilities[:, 1]
 
-                    # identify overlapping pixels
-                    overlap = len(pixels & pixels_comp)
+            # save
+            np.save(os.path.join(i, 'iscell.npy'), iscell, allow_pickle=True)
+            np.save(os.path.join(i, 'iscell_og.npy'), iscell_og, allow_pickle=True)
 
-                    # calculate percent overlap using the smaller roi
-                    p_overlap = overlap / min(len(pixels), len(pixels_comp))
-                        
-                    # if the p_overlap > 0.5, check for strong signal correlation
-                    if p_overlap > .1:
+            # save to .mat
+            ops_matlab = ops.copy()
+            if ops_matlab.get("date_proc"):
+                try:
+                    ops_matlab["date_proc"] = str(
+                        datetime.strftime(ops_matlab["date_proc"], "%Y-%m-%d %H:%M:%S.%f"))
+                except:
+                    pass        
+            sio.savemat(os.path.join(i, 'Fall_classified.mat'), mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks})
 
-                        # check for signal correlation
-                        r, p = pearsonr(x = c_cell, y = c_comp)
-
-                        # calculate r^2
-                        r2 = r ** 2
-                        print(f'r2={r2}')
-
-                        if r2 >= 0.7:
-                            print("Strongly correlated cell detected")
-                            input()
-                        
-            pass
-
-        # classifier_sessions
-        # TODO: FIX THIS
-        training_sessions = [
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L1_SD1_odor_day9_FOV3_optoRec_LBC0_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L607T4_SDswitch_day1_noOpto_FOV2_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L608_SEDS_day8_FOV1_LBC0_noOpto_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day3_LBC2_p70_optoRec_FOV1_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L613_CD1_odor_day1_optoRec_LBC2_FOV2_p70_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_CD2_odor_day1_FOV3_LBC2_optoRec_p70_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L615_CD_odor_day1_optoRec_FOV1_LBC2_p70_img",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L616_SD1_whisker_day8_optoRec_FOV1_LBC2_img_001",
-            r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\T30_SEDS_day25_FOV6_optoRec_LBC2_img_000"
-        ]
-
-        # gather data to train svm
-        df_train = gather_classifier_data(training_sessions)
-
-        # train svm
-        svc, scaler, selected_features, pca, n_components = build_classifier(df_train, auto_feature_select = False, preset_features = True)
+    # classify
+    def classify(self, session_path: str):
 
         # gather variables
-        df_predict = gather_classifier_data([self.s2ppath])
+        df_predict = self.gather_classifier_data([session_path])
 
         # test classifier
-        predictions, probabilities, decision_scores = predict_cell(df_predict = df_predict, svc=svc, scaler=scaler, selected_features=selected_features,
-                                                                    pca=pca, n_components=n_components)
+        predictions, probabilities, decision_scores = self.predict_cell(df_predict = df_predict, svc=self.svc, scaler=self.scaler, selected_features=self.selected_features,
+                                                                    pca=self.pca, n_components=self.n_components)
 
-        rewrite_iscell(predict_sessions = [self.s2ppath], predictions=predictions, probabilities = probabilities)
 
-    # method to merge ROI
-    def automerge_roi(self):
+        self.rewrite_data(predict_sessions = [session_path], predictions=predictions, probabilities = probabilities)
 
-        '''
-        Automatically merge cells if they are 70% overlapping and exhibiting > 0.9 temporal correlation
 
-        '''
+# ---------------------------------------- #
+# --  HELPER AND STAND ALONE FUNCTIONS  -- #
+# ---------------------------------------- #
 
-        # get ROI
-        from scipy.stats import pearsonr
+# a function to make sense of the fpath input
+def parse_fpath(fpath: str):
+    '''
+    function to take an fpath input and return the suite2p folder
 
-        # search for cells with overlap
-        stat = self.stat
-        cells = len(stat)
-        for i in range(cells):
+    Args:
+        >>> fpath: path to suite2p variables to load
 
-            # loop over cells, but ignore the current cell
-            for ii in range(i + 1, cells):
+    '''
+    if os.path.split(fpath)[-1] == 'suite2p':
+        # eventually make this code a loop that loops over the various planes
+        fpath = os.path.join(fpath,'plane0')
+    elif os.path.split(fpath)[-1] != 'plane0' and os.path.split(fpath)[-1] != 'suite2p':
+        fpath = os.path.join(fpath,'suite2p','plane0') 
+    return fpath     
 
-                # get distance between centriods
-                med_dist = (((stat[ii]['med'][0]-stat[i]['med'][0]) ** 2) + ((stat[ii]['med'][1]-stat[i]['med'][1]) ** 2)) ** 0.5
+# a function to add files to the fall.mat variable
+def add_to_fall(fpath: str, var_names: list = ['C.npy', 'S.npy']):
+    '''
+    A function that takes the Fall.mat variable and adds whatever variables
+    in the var_names list
+
+    Args:
+        >>> fpath: path to suite2p variables to load
+        >>> var_names: list of variables to add to the Fall.mat
+                        - The default is C.npy and S.npy as they aren't natively saved to Fall.mat
+
+    John Stout
+    '''
+
+    # get path data
+    fpath = parse_fpath(fpath = fpath)
+
+    # search for var_names
+    dir_contents = os.listdir(fpath)
+    vars_found = [i for i in dir_contents if i in var_names]
+    print("Discovered", vars_found)
+
+    # load the vars_found data into workspace - thanks copilot :)
+    data_dict = {os.path.splitext(i)[0]: np.load(os.path.join(fpath, i)) for i in vars_found}
+    
+    # load the Fall var
+    fall_found = 'Fall.mat' in dir_contents
+    if fall_found:
+
+        # load data
+        from scipy import io as sio
+        mat_data = sio.loadmat(os.path.join(fpath,'Fall.mat'))
+
+        # append
+        mat_data.update(data_dict)
+
+        # save
+        print("Saving variables as", os.path.join(fpath, 'Fall.mat'))
+        sio.savemat(os.path.join(fpath, 'Fall.mat'), mat_data)
+
+# mechanism to read binary output from suite2p
+def read_binary(fpath: str, Lx: int = 512, Ly: int = 512):
+
+    # get the correct directory
+    fpath = parse_fpath(fpath=fpath)
+
+    # read file for the ops
+    F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
+
+    # now search for binary file
+    fbin = [i for i in os.listdir(fpath) if '.bin' in i]
+    if len(fbin) > 0:
+        print(f'Discovered and reading .binary file: {fbin}')
+        bpath = os.path.join(fpath,fbin[0])
+
+    # Create a BinaryFile object
+    n_frames, Ly, Lx = ops["nframes"], ops["Ly"], ops["Lx"]
+
+    # read
+    print("Reading BinaryFile, please wait.....")
+    binFile = BinaryFile(Ly=Ly, Lx=Lx, filename=bpath, n_frames=n_frames)
+
+    # Read the data into a numpy array
+    data = binFile.data
+
+    return data
+
+# makes empty suite2p folders in subdirectories. The fpaths input is a
+def make_empty_suite2p(fpaths):
+    '''
+    makeEmptySuite2p
+
+    Creates empty suite2p folders in subdirectories.
+
+    Args:
+        >>> fpaths: Master directory with a bunch of sessions that you want empty suite2p folders created in
+    '''
+
+    # get subdirectories
+    fpath = os.listdir(fpaths)
+    for i in fpath:
+
+        # make temporary directory
+        temp_dir = os.path.join(fpaths,i)
+        newPath = os.path.join(fpaths,i,'suite2p','plane0')
+
+        # create paths
+        try:
+            os.makedirs(newPath)
+            print("Created path",newPath)
+        except:
+            pass
+
+# function to rescue cells
+def reject_cell(iscell, stat, compact, skF, asymmetry):
+    '''
+    This code rescues candidate false rejection cells based on high skew and low compactness,
+    then rejects cells with low asymmetry
+
+    John Stout
+    '''
+    
+    print("Removing cells with 1) low asymmetrym 2) low pixel counts and 3) low skew")
+
+    # rejection time - this actually seems to capture non-asymettrical cells but also
+    # really noisy cells because the event peaks are poorly estimated
+    asymmetry_cutoff = 0.4 # after finding cases of good cells > .4 but bad <=.4
+    rejected_cells = np.where(asymmetry <= asymmetry_cutoff)[0]
+    iscell[rejected_cells]=False
+
+    # rescue non-cells - these criterion are largely good
+    #rescued_cells = np.where(np.logical_and.reduce([iscell==False, compact <= 1.05, skF > 2.0]))[0]
+    #iscell[rescued_cells]=True 
+
+    # if there are <100 pixels in a cell, toss it
+    npix = np.array([i['npix'] for i in stat])
+    iscell[npix<100]=False
+
+    # if there are <100 pixels in a cell, toss it
+    skew = np.array([i['skew'] for i in stat])
+    iscell[skew<1.2]=False    
+
+    return iscell
+
+# function to rescue cells
+def rescue_cell(iscell, stat, skF):
+    '''
+    This code rescues candidate false rejection cells based on high skew and low compactness,
+    then rejects cells with low asymmetry
+
+    John Stout
+    '''
+    
+    print("Rescuing cells if they have >100 pixels and skew > 2.0")
+
+    # if there are <100 pixels in a cell, toss it
+    npix = np.array([i['npix'] for i in stat])
+    skew = np.array([i['skew'] for i in stat])
+
+    # iscell
+    iscell[(npix > 100) & (skew > 2.0)]=True
+
+    return iscell
+
+# function to find calcium event peaks
+def calcium_events(c, zscore_threshold = 1):
+    '''
+    calcium event detection using the C trace output from constrained foopsi OASIS
+    
+    Args:
+        >>> c: a single c traces
+        >>> zscore_threshold: default = 1 std which appears to be pretty good
+
+    Returns:
+        >>> idx_peak: peak indices
+        >>> c_raw_peaks: raw C valued peaks that also exceed 1std
+        >>> cZ_peaks: zscored trace valued peaks
+    '''
+    from scipy.stats import zscore
+    from scipy.signal import find_peaks
+
+    # use the c trace to identify peak times
+    cZ              = zscore(c)
+    idx_peaks, prop = find_peaks(cZ)          # find C trace events peaks
+    cZ_peaks        = cZ[idx_peaks]           # zscored C trace events that are also peaks
+    c_raw_peaks     = c[idx_peaks]            # raw C trace events that are also peaks
+    c_filt_idx      = np.where(cZ_peaks > 1)  # find C trace events that are also peaks but also greater than 1std
+    idx_peaks       = idx_peaks[c_filt_idx]   # indices of C peaks
+    cZ_peaks        = cZ_peaks[c_filt_idx]    # zscored C peaks
+    c_raw_peaks     = c_raw_peaks[c_filt_idx] # C peaks
+
+    return idx_peaks, c_raw_peaks, cZ_peaks
+
+# rejecting overlapping ROI
+def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
+
+    '''
+    Detect cells within 20 pixels, identify if a cell shares more than 50% of its activities with another cell,
+    place the cell with the lower 'skew' estimate to 'not cells'.
+
+    John Stout 1/23/2025
+
+    '''
+
+    # get ROI
+    from scipy.stats import pearsonr
+    from scipy.stats import zscore
+    from scipy.signal import find_peaks
+
+    print("Detecting overlapping ROI to toss")
+
+    # --  detrend the signal -- #
+    Fcor = F-Fneu; 
+    
+    # calculate skew using the non-detrended signal, like suite2p
+    skew = stats.skew(F-Fneu, axis=1)
+
+    # -- Identify cells with overlap and determine if one should be rejected -- #
+    stat = stat
+    cells = len(stat)
+    for i in range(cells):
+
+        # loop over cells, but ignore the current cell
+        for ii in range(i + 1, cells):
+
+            # get distance between centriods
+            med_dist = (((stat[ii]['med'][0]-stat[i]['med'][0]) ** 2) + ((stat[ii]['med'][1]-stat[i]['med'][1]) ** 2)) ** 0.5
+                
+            # if the ROI are less than 15 pixels apart between two classified cells, check for event overlap
+            if med_dist < 15 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
+
+                # detect event peaks
+                idx_peaks_i, c_raw_peaks_i, cZ_peaks_i    = calcium_events(c = C[i])
+                idx_peaks_ii, c_raw_peaks_ii, cZ_peaks_ii = calcium_events(c = C[ii])
+                
+                # search over all events in cell #ii
+                peakii_overlap = []
+                for peakii in idx_peaks_ii:
+
+                    # per each event in cell #ii, search for events in cell #i
+                    for peaki in idx_peaks_i:
+
+                        # estimate the time difference in peak events
+                        event_offset = (peakii - peaki)/fs
+                        
+                        # if signal co-occured within a 2s window, then these are consdiered the same
+                        if np.abs(event_offset) < 2:
+
+                            # tag event
+                            peakii_overlap.append(1)
+
+                            # now move on to the next peak to avoid two-peak detections
+                            break
+
+                # identify the percentage of events in celii that co-occured with celli
+                percent_overlap_ii_to_i = (len(peakii_overlap) / len(idx_peaks_ii)) * 100
+
+                # do a search through events in peaki (peaks from cell i), and find overlapping peaks in cell #ii
+                peaki_overlap = []
+                for peaki in idx_peaks_i:
+
+                    # per each event in cell #ii, search for events in cell #i
+                    for peakii in idx_peaks_ii:
+
+                        # estimate the time difference in peak events
+                        event_offset = (peaki - peakii)/fs
+                        
+                        # if signal co-occured within a 2s window, then these are consdiered the same
+                        if np.abs(event_offset) < 2:
+
+                            # tag event
+                            peaki_overlap.append(1)
+
+                            # now move on to the next peak to avoid two-peak detections
+                            break
+
+                # identify the percentage of events in celii that co-occured with celli
+                percent_overlap_i_to_ii = (len(peaki_overlap) / len(idx_peaks_i)) * 100
+                
+                if percent_overlap_i_to_ii > 25 or percent_overlap_ii_to_i > 25:
+                    print(f'Detected overlapping cell candidate between cell {ii} and cell {i}')
                     
-                # if the ROI are less than 20 pixels apart, check their temporal correlation
-                if med_dist < 20:
+                    # determine which cell to send backwards using skew
+                    if skew[ii] < skew[i]:
+                        print(f'Sending cell{ii} to the "Not Cell" category')
+                        iscell[ii] = False
+                    elif skew[i] < skew[ii]:
+                        print(f'Sending cell{i} to the "Not Cell" category')
+                        iscell[i] = False
+    return iscell
 
-                    # check for signal correlation
-                    r, p = pearsonr(x = self.F[i,:], y = self.F[ii,:])
-                    if r >= 0.5:
-                        print("Strongly correlated cell detected")
-                        # merge ROI
+# get asymmetry
+def get_asymmetry(F, Fneu, C, fs = 7.5):
+    from scipy.signal import find_peaks
+    from scipy.stats import zscore
 
-        def merge_activity_masks(self):
-            print("merging activity... this may take some time")
-            i0 = int(1 - self.iscell[parent.ichosen])
-            ypix = np.zeros((0,), np.int32)
-            xpix = np.zeros((0,), np.int32)
-            lam = np.zeros((0,), np.float32)
-            footprints = np.array([])
-            F = np.zeros((0, parent.Fcell.shape[1]), np.float32)
-            Fneu = np.zeros((0, parent.Fcell.shape[1]), np.float32)
-            if parent.hasred:
-                F_chan2 = np.zeros((0, parent.Fcell.shape[1]), np.float32)
-                Fneu_chan2 = np.zeros((0, parent.Fcell.shape[1]), np.float32)
-                if not hasattr(parent, "F_chan2"):
-                    parent.F_chan2 = np.load(os.path.join(parent.basename, "F_chan2.npy"))
-                    parent.Fneu_chan2 = np.load(os.path.join(parent.basename, "Fneu_chan2.npy"))
+    # neuropil correct
+    Fcor = F-Fneu
 
-            probcell = []
-            probredcell = []
-            merged_cells = []
-            remove_merged = []
-            for n in np.array(parent.imerge):
-                if len(parent.stat[n]["imerge"]) > 0:
-                    remove_merged.append(n)
-                    for k in parent.stat[n]["imerge"]:
-                        merged_cells.append(k)
-                else:
-                    merged_cells.append(n)
-            merged_cells = np.unique(np.array(merged_cells))
+    asymmetry = []
+    for celli in range(C.shape[0]):
 
-            for n in merged_cells:
-                ypix = np.append(ypix, parent.stat[n]["ypix"])
-                xpix = np.append(xpix, parent.stat[n]["xpix"])
-                lam = np.append(lam, parent.stat[n]["lam"])
-                footprints = np.append(footprints, parent.stat[n]["footprint"])
-                F = np.append(F, parent.Fcell[n, :][np.newaxis, :], axis=0)
-                Fneu = np.append(Fneu, parent.Fneu[n, :][np.newaxis, :], axis=0)
-                if parent.hasred:
-                    F_chan2 = np.append(F_chan2, parent.F_chan2[n, :][np.newaxis, :], axis=0)
-                    Fneu_chan2 = np.append(Fneu_chan2, parent.Fneu_chan2[n, :][np.newaxis, :],
-                                        axis=0)
-                probcell.append(parent.probcell[n])
-                probredcell.append(parent.probredcell[n])
+        # get example traces
+        c = C[celli]
+        f = Fcor[celli]
 
-            probcell = np.array(probcell)
-            probredcell = np.array(probredcell)
-            pmean = probcell.mean()
-            prmean = probredcell.mean()
+        # detect event peaks
+        #cZ              = zscore(c)
+        #idx_peaks, prop = find_peaks(cZ)
+        #c_peaks         = cZ[idx_peaks]          # find C trace events that are also peaks
+        #c_filt_idx      = np.where(c_peaks > 1)  # find C trace events that are also peaks but also greater than 1std
+        #idx_peaks       = idx_peaks[c_filt_idx]  # 
+        #c_peaks         = c_peaks[c_filt_idx]    # 
+        #F_peaks         = f[idx_peaks] # event peaks
 
-            # remove overlaps
-            ipix = np.concatenate((ypix[:, np.newaxis], xpix[:, np.newaxis]), axis=1)
-            _, goodi = np.unique(ipix, return_index=True, axis=0)
-            ypix = ypix[goodi]
-            xpix = xpix[goodi]
-            lam = lam[goodi]
+        # get event peaks
+        idx_peaks, __, __ = calcium_events(c = c)
+        F_peaks = f[idx_peaks]
 
-            ### compute statistics of merges
-            stat0 = {}
-            stat0["imerge"] = merged_cells
-            if "iplane" in parent.stat[merged_cells[0]]:
-                stat0["iplane"] = parent.stat[merged_cells[0]]["iplane"]
-            stat0["ypix"] = ypix
-            stat0["xpix"] = xpix
-            stat0["med"] = median_pix(ypix, xpix)
-            stat0["lam"] = lam / lam.sum()
+        # Initialize decay times
+        decay_left_times = []
+        decay_right_times = []
+        cell_asymmetry = []
 
-            if "aspect" in parent.ops:
-                d0 = np.array([int(parent.ops["aspect"] * 10), 10])
-            else:
-                d0 = parent.ops["diameter"]
-                if isinstance(d0, int):
-                    d0 = [d0, d0]
+        # Loop over events and detect decay
+        for idx, peak_value in zip(idx_peaks, F_peaks):
 
-            # red prob
-            stat0["chan2_prob"] = -1
-            # inmerge
-            stat0["inmerge"] = -1
+            # Define the decay threshold (e.g., 50% of peak value)
+            decay_threshold = peak_value * 0.5
 
-            ### compute activity of merged cells
-            F = F.mean(axis=0)
-            Fneu = Fneu.mean(axis=0)
-            if parent.hasred:
-                F_chan2 = F_chan2.mean(axis=0)
-                Fneu_chan2 = Fneu_chan2.mean(axis=0)
-            dF = F - parent.ops["neucoeff"] * Fneu
-            # activity stats
-            stat0["skew"] = stats.skew(dF)
-            stat0["std"] = dF.std()
+            # Search for decay before the peak
+            left_indices = np.where(f[:idx] <= decay_threshold)[0]
+            if len(left_indices) > 0:
+                decay_left = left_indices[-1]
+                decay_left_times.append(decay_left)
 
-            spks = oasis(F=dF[np.newaxis, :], batch_size=parent.ops["batch_size"],
-                        tau=parent.ops["tau"], fs=parent.ops["fs"])
+            # Search for decay after the peak
+            right_indices = np.where(f[idx:] <= decay_threshold)[0]
+            if len(right_indices) > 0:
+                decay_right = idx + right_indices[0]
+                decay_right_times.append(decay_right)
 
-            ### remove previously merged cell from FOV (do not replace)
-            for k in remove_merged:
-                masks.remove_roi(parent, k, i0)
-                np.delete(parent.stat, k, 0)
-                np.delete(parent.Fcell, k, 0)
-                np.delete(parent.Fneu, k, 0)
-                np.delete(parent.F_chan2, k, 0)
-                np.delete(parent.Fneu_chan2, k, 0)
-                np.delete(parent.Spks, k, 0)
-                np.delete(parent.iscell, k, 0)
-                np.delete(parent.probcell, k, 0)
-                np.delete(parent.probredcell, k, 0)
-                np.delete(parent.redcell, k, 0)
-                np.delete(parent.notmerged, k, 0)
+            # offset
+            right_sided = np.abs((idx-decay_right) / fs)
+            left_sided = np.abs((idx-decay_left) / fs)
+            cell_asymmetry.append(right_sided-left_sided)
 
-            # add cell to structs
-            parent.stat = np.concatenate((parent.stat, np.array([stat0])), axis=0)
-            parent.stat = roi_stats(parent.stat, parent.Ly, parent.Lx,
-                                    aspect=parent.ops.get("aspect", None),
-                                    diameter=parent.ops.get("diameter", None),
-                                    do_crop=parent.ops.get("soma_crop", 1))
-            parent.stat[-1]["lam"] = parent.stat[-1]["lam"] * merged_cells.size
-            parent.Fcell = np.concatenate((parent.Fcell, F[np.newaxis, :]), axis=0)
-            parent.Fneu = np.concatenate((parent.Fneu, Fneu[np.newaxis, :]), axis=0)
-            if parent.hasred:
-                parent.F_chan2 = np.concatenate((parent.F_chan2, F_chan2[np.newaxis, :]),
-                                                axis=0)
-                parent.Fneu_chan2 = np.concatenate(
-                    (parent.Fneu_chan2, Fneu_chan2[np.newaxis, :]), axis=0)
-            parent.Spks = np.concatenate((parent.Spks, spks), axis=0)
-            iscell = np.array([parent.iscell[parent.ichosen]], dtype=bool)
-            parent.iscell = np.concatenate((parent.iscell, iscell), axis=0)
-            parent.probcell = np.append(parent.probcell, pmean)
-            parent.probredcell = np.append(parent.probredcell, -1)
-            parent.redcell = np.append(parent.redcell, False)
-            parent.notmerged = np.append(parent.notmerged, False)
+        # take the median of the asymmetry metric
+        asymmetry.append(np.median(np.array(cell_asymmetry)))
 
-            ### for GUI drawing
-            ycirc, xcirc = utils.circle(parent.stat[-1]["med"], parent.stat[-1]["radius"])
-            goodi = ((ycirc >= 0) & (xcirc >= 0) & (ycirc < parent.ops["Ly"]) &
-                    (xcirc < parent.ops["Lx"]))
-            parent.stat[-1]["ycirc"] = ycirc[goodi]
-            parent.stat[-1]["xcirc"] = xcirc[goodi]
+    # make into numpy
+    asymmetry = np.array(asymmetry)
+    return asymmetry
 
-            # * add colors *
-            masks.make_colors(parent)
-            # recompute binned F
-            parent.mode_change(parent.activityMode)
+    # Plot Fcor signal with detected peaks and decay points
+    #plt.close()
+    #plt.plot(f, label='Fcor Signal')
+    #plt.plot(idx_peaks, F_peaks, 'x', label='Peaks')
+    #if decay_left is not None:
+    #    plt.axvline(x=decay_left, color='r', linestyle='--', label='Decay Left')
+    #if decay_right is not None:
+    #    plt.axvline(x=decay_right, color='g', linestyle='--', label='Decay Right')
+    #plt.legend()
+    #plt.show()
 
-            for n in merged_cells:
-                parent.stat[n]["inmerge"] = len(parent.stat) - 1
-                masks.remove_roi(parent, n, i0)
-            masks.add_roi(parent, len(parent.stat) - 1, i0)
-            masks.redraw_masks(parent, ypix, xpix)
+# pnr
+def pnr(F, Fneu):
 
+    # Calculate 95th percentiles
+    pk95F = np.percentile(np.sort(np.abs(F), axis=1), 95, axis=1)
+    pk95N = np.percentile(np.sort(np.abs(Fneu), axis=1), 95, axis=1)
+
+    # Calculate PNR (peak noise ratio)
+    pnr = pk95F / pk95N
+
+    return pnr
 
 # this is essentially F0
 def baselineF(fpath: str, baseline = None):
@@ -1655,166 +1668,104 @@ def snr_pnr(fpath):
     #pk95(x)=qnt(end);
     #pnr(x)=pk95(x)./std(neuron.C_raw(x,:));
 
-# dysfunctional
-#fpath = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L1_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SD1_odor_day9_FOV3_optoRec_LBC0_img"
-def automatic_cell_sorter(fpath: str):
-    '''
-    This function is going to use automatic algorithms that take into account
-    the width, the SNR, and number of peak events to further classify suite2p cells
-    as cells or not cells.
+# smooth data
+def smooth(data, window_len=11, window='hanning'):
+    if window_len < 3:
+        return data
+    s = np.r_[data[window_len-1:0:-1], data, data[-2:-window_len-1:-1]]
+    if window == 'flat':  # moving average
+        w = np.ones(window_len, 'd')
+    else:
+        w = eval('np.'+window+'(window_len)')
+    y = np.convolve(w/w.sum(), s, mode='valid')
+    return y[(window_len//2-1):-(window_len//2)]
 
-    Maybe we could use various features to train an algorithm
+# TODO needs testing
+# updated calcium_events code that accounts for overalapping evernts
+def calcium_events_new(c, Fc, zscore_threshold=1, fs=7.5):
+    """
+    Calcium event detection using the C trace output from constrained foopsi OASIS.
 
+    Args:
+        c: a single c trace
+        Fc: filtered signal
+        zscore_threshold: default = 1 std which appears to be pretty good
+        fs: sampling frequency, default = 7.5
 
-    Criterion: decay function x symmetry of calcium event x calcium event peak >2x the noise peak
-    
-    '''
-    import matplotlib.pyplot as plt
-    import matplotlib
-    
-    # suite2p outputs
-    F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=fpath)
+    Returns:
+        idx_peaks_C: peak indices in C
+        idx_peaks_F: peak indices in Fc
+    """
+    import numpy as np
+    from scipy.stats import zscore
+    from scipy.signal import find_peaks
+    UserWarning("This code has not been tested. The old calcium_events_old was used in Python. This code was converted from MATLAB")
 
-    # idx for cells
-    idxCell   = np.where(iscell==True)[0]
-    idxNoCell = np.where(iscell==False)[0]
+    # Compute z-score of the signal
+    cZ = zscore(c)
 
-    # zscore the signals
-    blFz = stats.zscore(blF, axis=1)
+    # Find peaks in the z-scored signal
+    idx_peaks_C, _ = find_peaks(cZ)
+    pks = cZ[idx_peaks_C]
 
-    # threshold out events as 1std from mean
-    caEvents = np.where(blFz > 2)
+    # Identify peaks that are within 5s of each other and keep the strongest peak
+    time_range = np.linspace(0, len(c) / fs, len(c))
+    peak_times = time_range[idx_peaks_C]
 
-    #%matplotlib widget
-    #matplotlib.use('Agg')
-    fig, ax = plt.subplots(nrows=10,ncols=2)
-    for i in range(9):
-        ax[i,0].plot(blFz[idxCell[i]], color='b', linewidth=0.5)
-        ax[i,1].plot(blFz[idxNoCell[i]], color='r', linewidth=0.5)
-    plt.plot(blFz[0])
-    plt.show()
+    next_flag = False
+    while not next_flag:
+        # Get difference in peak times
+        peak_offset = np.diff(peak_times)
 
-    # calculate signal:noise ratio on the baseline corrected F
-    
+        # Identify peaks that are too close to each other
+        double_peak_candidate = np.where(peak_offset < 5)[0]
 
-    # compute peak-to-noise ratio
-    #data_filtered -= data_filtered.mean(axis=0)
-    #data_max = np.max(data_filtered, axis=0)
-    #data_std = get_noise_fft(data_filtered.T, noise_method='mean')[0].T
-    #pnr = np.divide(data_max, data_std)
-    #pnr[pnr < 0] = 0   
-
-
-
-    pass
-
-
-# --- grosmark method --- #
-
-# 1) motion correct movie
-# 2) correlation coefficients of individual frames to the avg motion correted frame is calculated
-# 3) low correlation frames are excluded and censored
-
-# 1) Align sessions using a cross-correlation maximizing two dimensional affine transform, then concatenate
-# 2) Only pixels observed across all imaging sessions included
-
-# 1) run the concatenated film through suite2p
-'''
-class preProcess():
-    def __init__(self):
-        pass
-
-    # fast_suite2p above motion corrects using suite2ps algorithms. This code
-    # is to ONLY motion correct, but not run suite2p in case the user wants to 
-    def motion_correct(self, imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = None):
-        """
-        This code motion corrects and saves your img.tif file
-
-        Args:
-            >>> datapath: directory, including the .tif file extension
-            >>> savepath: path to save your data
-            >>> gcamp: default is 6f. 6f and 8f are interchangeable. 8s and 8m have different tau constants.
-            >>> zoom_factor: currently dysfunctional, leave alone
-            >>> alt_ops: None. Allows user to provide their own ops file.
-
-        John Stout
-        """
-
-        # load data lazily
-        images = tf.memmap(imgpath, mode="r")
-
-        # movies and associated frame rates
-        root_path = os.path.split(imgpath)[0]
-        movie_name = os.path.split(imgpath)[1]
-
-        # get metadata
-        root_contents = os.listdir(root_path)
-        metadata_file = [i for i in root_contents if '.xml' in i and 'experiment' in i.lower()][0]
-        metadata_path = os.path.join(root_path,metadata_file)
-        file = xmltodict.parse(open(metadata_path,"r").read()) # .xml file
-
-        # default ops
-        if alt_ops is None:
-
-            # define frame rate based on metadata
-            fr = float(file['ThorImageExperiment']['LSM']['@frameRate'])
-            print("Frame rate of",fr,'changed to',fr/4)
-            fr = fr/4
-
-            # get default suite2p inputs
-            ops = suite2p.default_ops()
-            ops['fs']=fr
-
-            # The default is actually 1.0, but I heard Carsen Stringer mention using 0.7 is using fast gcamp
-            if '6f' in gcamp or '8f' in gcamp: # check the 8f
-                ops['tau'] = 0.7 # gcampe6f
-            elif '6m' in gcamp:
-                ops['tau'] = 1.0
-            elif '6s' in gcamp:
-                ops['tau'] = 1.3
-
-            # if the shape of your images data is > 3, then you have a z-plane
-            if len(images.shape) > 3 and len(images.shape) < 5:
-                print("z-plane detected. If this is not true, stop and troubleshoot")
-                ops['nplanes']=images.shape[-1]
-            else:
-                ops['nplanes']=1
-        
+        if double_peak_candidate.size == 0:
+            next_flag = True
         else:
+            # Examine each peak and keep the max event
+            for evi in range(len(double_peak_candidate)):
+                # Get the events from each and identify which events are best (difference between events)
+                event_diff = pks[double_peak_candidate[evi]:double_peak_candidate[evi]+2]
+                
+                # Take the minima and remove it
+                event_toss = np.argmin(event_diff)
+                
+                # Set to NaN so we don't change the size of the array during the loop
+                idx_peaks_C[double_peak_candidate[evi] + event_toss] = np.nan
+                peak_times[double_peak_candidate[evi] + event_toss] = np.nan
+                pks[double_peak_candidate[evi] + event_toss] = np.nan
 
-            # if the user provided an ops file
-            ops = alt_ops
-            
-            # if the provided ops file has a save_path, it is probably wrong
-            if len(ops['save_path0'])>0:
-                print("save_path0 detected in ops file, rewriting to default")
-                ops['save_path0']=''
-            if len(ops['fast_disk'])>0:
-                print("fast_disk detected in op file, rewriting to default")
-                ops['fast_disk']=[]
+            # Remove NaNs
+            idx_peaks_C = idx_peaks_C[~np.isnan(idx_peaks_C)]
+            peak_times = peak_times[~np.isnan(peak_times)]
+            pks = pks[~np.isnan(pks)]
 
-        # run suite2p algorithm
-        if len(savepath) > 0:
-            ops['save_path0']=savepath 
+    # Search through peak_times for max events in Fc
+    Fc_sm = smooth(Fc, window_len=int(np.ceil(fs)*4), window='gaussian')
 
-        # set db, this overrides the ops variable
-        db = {
-            'data_path': [root_path],
-            'tiff_list': [movie_name],
-        }
-        db
+    # Now correct the peak offset
+    idx_peaks_F = []
+    for evi in range(len(idx_peaks_C)):
+        # Get 5s surrounding idx_peak
+        idx_around = np.arange(max(0, idx_peaks_C[evi] - int(fs*5)), min(len(c), idx_peaks_C[evi] + int(fs*5)))
 
-        # set roidetect to false so that you only get the motion corrected video as an output
-        ops['roidetect'] = False
+        # Now get data surrounding time point of interest
+        temp_F = Fc_sm[idx_around]
 
-        # save mot corrected video
-        ops['reg_tif'] = True
+        # Get peak of the temp variable
+        max_temp_F = np.max(temp_F)
+        idx_max_temp_F = np.argmax(temp_F)
 
-        # running this will only save the motion corrected video
-        output_ops = suite2p.run_s2p(ops=ops, db=db)
+        # Reset the idx_peak
+        idx_peaks_F.append(idx_around[idx_max_temp_F])
 
-    # grosmark identifies poor motion corrected frames
-    def badMotionCorrect():
-        pass
+    # Convert idx_peaks_F to numpy array
+    idx_peaks_F = np.array(idx_peaks_F)
 
-'''
+    # Now filter for z-score threshold
+    idx_peaks_C = idx_peaks_C[cZ[idx_peaks_C.astype(int)] > zscore_threshold]
+    idx_peaks_F = idx_peaks_F[cZ[idx_peaks_F.astype(int)] > zscore_threshold]
+
+    return idx_peaks_C, idx_peaks_F
+

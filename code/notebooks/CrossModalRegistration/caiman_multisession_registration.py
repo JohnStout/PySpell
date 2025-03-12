@@ -5,7 +5,7 @@ import sys
 
 # import caiman code
 import os; path_added = os.getcwd(); os.chdir(path_added); print("Added path:",path_added)
-import caimanfuns
+import code.caiman_funs.roi_funs as roi_funs
 
 print("Please cite 'CaImAn' for multisession registration")
 
@@ -144,7 +144,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
     A         = spatial
     dims      = multisess[keys]['dims'] # dimensions for reshape
     templates = multisess['templates']  # templates used for registration
-    spatial_union, assignments, matchings = caimanfuns.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=50)
+    spatial_union, assignments, matchings = roi_funs.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=50)
 
     # save results
     multisess['spatial_union'] = spatial_union; multisess['assignments'] = assignments; multisess['matchings'] = matchings
@@ -153,7 +153,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
     for i in range(len(spatial)):
         # get session name
         sess_name = os.path.split(fnames[i])[-1]
-        _, fig = caimanfuns.plot_contours(spatial[i],templates[i].T,com=coms[i],swap_dim=True,display_numbers=False);
+        _, fig = roi_funs.plot_contours(spatial[i],templates[i].T,com=coms[i],swap_dim=True,display_numbers=False);
         ax=fig.gca()
         ax.set_title("Session: "+sess_name)
 
@@ -173,7 +173,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
 
         # now find only common center of masses
         coms_common = coms[i][assignments_filtered[:,i]]
-        _, fig  = caimanfuns.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=False);
+        _, fig  = roi_funs.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=False);
         ax=fig.gca()
         ax.set_title("Session: "+sess_name+" Common ROI")
 

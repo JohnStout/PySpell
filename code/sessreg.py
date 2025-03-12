@@ -8,7 +8,7 @@ from copy import deepcopy
 
 # import caiman code that I hacked
 import os
-import caimanfuns
+import code.caiman_funs.roi_funs as roi_funs
 
 # local stuff
 import rootfun as rf # we can import this if our cwd is local
@@ -243,7 +243,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
     A         = spatial
     dims      = multisess[keys]['dims'] # dimensions for reshape
     templates = multisess['templates']  # templates used for registration
-    spatial_union, assignments, matchings = caimanfuns.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=max_distance)
+    spatial_union, assignments, matchings = roi_funs.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=max_distance)
 
     # save results
     multisess['inputs'] = dict(); multisess['inputs']['coms']=coms
@@ -254,7 +254,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
     for i in range(len(spatial)):
         # get session name
         sess_name = os.path.split(fnames[i])[-1]
-        _, fig = caimanfuns.plot_contours(spatial[i],templates[i].T,com=coms[i],swap_dim=True,display_numbers=False);
+        _, fig = roi_funs.plot_contours(spatial[i],templates[i].T,com=coms[i],swap_dim=True,display_numbers=False);
         ax=fig.gca()
         ax.set_title("Session: "+sess_name)
 
@@ -276,7 +276,7 @@ def multisess_register_suite2p(fnames: list, template = 'max_proj', single_plane
 
         # now find only common center of masses
         coms_common = coms[i][assignments_filtered[:,i]]
-        _, fig  = caimanfuns.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=False);
+        _, fig  = roi_funs.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=False);
         ax=fig.gca()
         ax.set_title("Session: "+sess_name+" Common ROI")
 
@@ -486,7 +486,7 @@ def multiplane_registeration(fpath: str, template = 'max_proj', single_plane: bo
     dims      = multiplane[keys]['dims'] # dimensions for reshape
     templates = multiplane['templates']  # templates used for registration
     max_distance = 15 # multiplane shifts should even be less
-    spatial_union, assignments, matchings = caimanfuns.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=max_distance)
+    spatial_union, assignments, matchings = roi_funs.register_multisession(A=A, dims=dims, coms=coms, templates=templates, max_dist=max_distance)
 
     # save results
     multiplane['inputs'] = dict(); multiplane['inputs']['coms']=coms
@@ -522,7 +522,7 @@ def multiplane_registeration(fpath: str, template = 'max_proj', single_plane: bo
 
         # now find only common center of masses
         coms_common = coms[i][assignments_filtered[:,i]]
-        _, fig  = caimanfuns.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=True);
+        _, fig  = roi_funs.plot_contours(spatial[i][:,assignments_filtered[:,i]],templates[i].T,com=coms_common,swap_dim=True,display_numbers=True);
         ax=fig.gca()
         ax.set_title("Session: "+sess_name+" Common ROI")
 

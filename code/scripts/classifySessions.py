@@ -1,52 +1,46 @@
-# classifier
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-# load modules
-import os; import matplotlib.pyplot as plt; import tifffile as tf
-path_added = os.path.split(os.getcwd())[0]; os.chdir(path_added); print("Added path:",path_added)
-#from s2pfuns import detrend_signal
+# Standard library imports
+import os
+import sys
+from datetime import datetime
 from pathlib import Path
-import numpy as np
-import time
-import suite2p
-from suite2p.extraction import dcnv
-import csv
-import rootfun as rf # we can import this if our cwd is local
 
+# Add parent folder to Python path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+# Scientific computing imports
+import numpy as np
+from scipy import stats, special
+from scipy.stats import norm, median_abs_deviation
+from scipy.signal import savgol_filter, find_peaks
+from scipy.ndimage import gaussian_filter1d
+
+# Data processing and machine learning imports
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
-import numpy as np
-from scipy.ndimage import gaussian_filter, gaussian_filter1d
-from s2pfuns import read_s2p
-from scipy import stats
-from scipy.stats import median_abs_deviation
-from scipy.signal import savgol_filter
-
-from caiman import components_evaluation as comp_eval
-from scipy.stats import norm
-from scipy import special
-
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import numpy as np
-import seaborn as sns
-
-import pandas as pd
-
-import pandas as pd
-import numpy as np
-from sklearn.svm import SVC
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-
-import pandas as pd
-import numpy as np
 from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import RFE
 
-from suite2p.classification import classify, builtin_classfile
-builtin_classfile = builtin_classfile
+# Visualization imports
+import matplotlib.pyplot as plt
+
+# Specialized scientific imports
+import tifffile as tf
+import suite2p
+from suite2p.extraction import dcnv
+from suite2p.classification import builtin_classfile
+from caiman_funs.caiman_eval import compute_event_exceptionality
+import scipy.io as sio
+
+# Local imports
+from s2pfuns import read_s2p
+import rootfun as rf
 
 # pnr
 def pnr(F, Fneu):
@@ -107,7 +101,7 @@ def gather_classifier_data(classifier_sessions: list):
         correlation = np.array([np.corrcoef(smoothF[i], C[i])[0, 1] for i in range(smoothF.shape[0])])
 
         # Fitness, traces == C
-        fitness, erfc, sd_r, md = comp_eval.compute_event_exceptionality(traces=F-Fneu)
+        fitness, erfc, sd_r, md = compute_event_exceptionality(traces=F-Fneu)
 
         # Number of timesteps to consider when testing new neuron candidates
         min_SNR = 2.5
@@ -793,18 +787,32 @@ def rewrite_data(predict_sessions, predictions, probabilities):
         sio.savemat(os.path.join(i, 'suite2p', 'plane0','Fall_classified.mat'), mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks})
 
 # classifier_sessions
+# training_sessions = [
+#     #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L1_SD1_odor_day9_FOV3_optoRec_LBC0_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L607T4_SDswitch_day1_noOpto_FOV2_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L608_SEDS_day8_FOV1_LBC0_noOpto_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day3_LBC2_p70_optoRec_FOV1_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L613_CD1_odor_day1_optoRec_LBC2_FOV2_p70_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_CD2_odor_day1_FOV3_LBC2_optoRec_p70_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L615_CD_odor_day1_optoRec_FOV1_LBC2_p70_img",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L616_SD1_whisker_day8_optoRec_FOV1_LBC2_img_001",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\T30_SEDS_day25_FOV6_optoRec_LBC2_img_000",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day11_updatedParameters",
+#     r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_SEDS_day2_optoRec_LBC2_p70_FOV3_img"
+# ]
+
 training_sessions = [
     #r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L1_SD1_odor_day9_FOV3_optoRec_LBC0_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L607T4_SDswitch_day1_noOpto_FOV2_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L608_SEDS_day8_FOV1_LBC0_noOpto_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day3_LBC2_p70_optoRec_FOV1_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L613_CD1_odor_day1_optoRec_LBC2_FOV2_p70_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_CD2_odor_day1_FOV3_LBC2_optoRec_p70_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L615_CD_odor_day1_optoRec_FOV1_LBC2_p70_img",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L616_SD1_whisker_day8_optoRec_FOV1_LBC2_img_001",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\T30_SEDS_day25_FOV6_optoRec_LBC2_img_000",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day11_updatedParameters",
-    r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_SEDS_day2_optoRec_LBC2_p70_FOV3_img"
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L607T4_SDswitch_day1_noOpto_FOV2_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L608_SEDS_day8_FOV1_LBC0_noOpto_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day3_LBC2_p70_optoRec_FOV1_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L613_CD1_odor_day1_optoRec_LBC2_FOV2_p70_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_CD2_odor_day1_FOV3_LBC2_optoRec_p70_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L615_CD_odor_day1_optoRec_FOV1_LBC2_p70_img",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L616_SD1_whisker_day8_optoRec_FOV1_LBC2_img_001",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\T30_SEDS_day25_FOV6_optoRec_LBC2_img_000",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L612_SEDS_day11_updatedParameters",
+    r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p\L614_SEDS_day2_optoRec_LBC2_p70_FOV3_img"
 ]
 
 # gather data to train svm
@@ -814,7 +822,7 @@ df_train = gather_classifier_data(training_sessions)
 svc, scaler, selected_features, pca, n_components, idx_rem = build_classifier(df_train, auto_feature_select = False, preset_features = True)
 
 # -- classifier testing -- #
-Datafolder = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\Manuscripts\in prep\L6CTopto_panneuronal_experiment\data\subjects"
+Datafolder = r"I:\Alex"
 
 # get all subdirs
 subdirs = rf.list_all_subdirs(phile_name = Datafolder)
