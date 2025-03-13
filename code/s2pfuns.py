@@ -1148,7 +1148,7 @@ class classifyCells():
                         datetime.strftime(ops_matlab["date_proc"], "%Y-%m-%d %H:%M:%S.%f"))
                 except:
                     pass        
-            sio.savemat(os.path.join(i, 'Fall_classified.mat'), mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks})
+            sio.savemat(os.path.join(i, 'Fall.mat'), mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks})
 
     # classify
     def classify(self, session_path: str):

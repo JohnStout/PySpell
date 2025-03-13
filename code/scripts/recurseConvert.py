@@ -95,6 +95,11 @@ UPDATES:
                     - Fixed CellReg file naming convention and provided a tool to replace old naming
                     - Added a warning for imf improper fit
 
+    - 3/13/2025: Added the SVM cell classifier (note that it also has post classification cleaning steps it performs)
+                    - this will run automatically if the C and S variables are being rerun as it uses the C variable
+                    - Otherwise, you want to rerun the classifier, set 'rerunClassifier' to True in the imgpaths dictionary
+                    - Otherwise, if the C/S variables require updating based on datetime, the classifier is again rerun
+
 REFERENCES:
     Constrained Foopsi
         * Pnevmatikakis et al. 2016. Neuron, in press, http://dx.doi.org/10.1016/j.neuron.2015.11.037
@@ -144,9 +149,6 @@ s2p_update_datetime = datetime.strptime(s2p_update, '%B %d, %Y, %H:%M:%S')
 clean_traces_update = 'January 10, 2025, 20:00:00'
 clean_traces_datetime = datetime.strptime(clean_traces_update, '%B %d, %Y, %H:%M:%S')
 
-# ------------------------------------------ #
-# ------------------------------------------ #
-
 # run parallel processing
 run_parallel = False
 
@@ -155,13 +157,17 @@ if run_opts[run_method]=='iterate':
 else:
     print("Forever loop starting in 3...2.....1.......3")
 
-# recursive method
-imgpaths = dict()
+# ------------------------------------------ #
+# --------- Build Classifier  -------------- #
+
+# build classifier
+obj=s2pfuns.classifyCells(training_sessions_directory=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p'))
 
 # ---------------------------------------------------------------------------- #
 # ---------------DEFINE FOLDERS BELOW----------------------------------------- #
 
-# TODO: ADD 'DateReplace': 'Month, Day, Year'
+# recursive method
+imgpaths = dict()
 imgpaths = [
 
     # John folders
@@ -225,6 +231,8 @@ for i in imgpaths:
         print("Default behReplace==False for", i)
     if 'saveCleanedF' not in i:
         i['saveCleanedF'] = False
+    if 'rerunClassifier' not in i:
+        i['rerunClassifier'] = False
 
 # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
 next = 0
@@ -255,6 +263,7 @@ while next == 0:
         rem_tif            = i['remTif']
         behReplace         = i['behReplace']
         saveCleanedF       = i['saveCleanedF']
+        rerunClassifier    = i['rerunClassifier']
 
         if img_replace == True:
             print("img_replace==True, wiping and replacing img.tif")
@@ -400,7 +409,8 @@ while next == 0:
                                             gcamp='6f', 
                                             alt_ops=alt_ops,
                                             wipe_and_replace=s2p_replace)
-                        
+
+                        # report                       
                         process_end = time.process_time() # report
                         print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
 
@@ -438,7 +448,7 @@ while next == 0:
                             subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
                             process_end = time.process_time() # report
                             print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
-                        
+
                             # find whether deconvolution steps were already performed
                             dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
                             dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
@@ -456,7 +466,15 @@ while next == 0:
 
                         print("Postprocessing session:", subi)                        
                         code_start = time.process_time()  
-                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
+
+                        # get the C and S trace from deconvolution
+                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces() 
+                        
+                        # now classify
+                        print("Classifying cells with SVM and cleaning the results...")
+                        obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
+
+                        # report
                         procFOVess_end = time.process_time()
                         print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
                     
@@ -473,12 +491,25 @@ while next == 0:
                         # you should rerun this.
                         if datetime_traces < s2p_update_datetime or datetime_traces < clean_traces_datetime or datetime_traces < datetime_suite2p:
                             print("Update to suite2p or cleanupRawTraces detected. Forced update to C and S.npy variables...")
-                            print("Postprocessing session:", subi)                        
+                            print("Postprocessing session:", subi)   
+
+                            # log                     
                             code_start = time.process_time()  
+
+                            # get the C and S trace from deconvolution
                             s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
+                            
+                            # run classifier
+                            print("Classifying cells with SVM and cleaning the results...")
+                            obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
+
+                            # report
                             procFOVess_end = time.process_time()
                             print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
                     
+                        if i['rerunClassifier'] == True:
+                            obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
+
                     # --------------------------------------------------------- #
                     # -------------------- CELL REG --------------------------- #
 
