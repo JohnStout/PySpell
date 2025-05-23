@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "spellpy"
+name = "pyspell"
 version = "0.1.0"
 description = "Python package for Tim Spellman lab"
 authors = ["Your Name <you@example.com>"]
