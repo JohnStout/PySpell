@@ -330,7 +330,7 @@ class postProcess():
         # load C and S if they exist
         try: 
             self.C = np.load(os.path.join(s2ppath,'C.npy'), allow_pickle=True)
-            self.S = np.load(os.path.join(s2ppath,'S.npy'),)
+            self.S = np.load(os.path.join(s2ppath,'S.npy'), allow_pickle=True)
         except:
             print("C and S not found in",s2ppath)
 
