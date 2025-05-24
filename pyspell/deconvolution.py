@@ -145,13 +145,30 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
                     # Infer the most likely discretized spike train underlying an AR(1) fluorescence trace
                     # Solves the noise constrained sparse non-negative deconvolution problem
                     # min |s|_1 subject to |c-y|^2 = sn^2 T and s_t = c_t-g c_{t-1} >= 0
-                    c, sp, bl, g, lam = constrained_oasisAR1(
-                        fluor.astype(np.float32), g[0], sn, optimize_b=True, b_nonneg=bas_nonneg,
-                        optimize_g=optimize_g, penalty=penalty, s_min=0 if s_min is None else s_min)
+                    try:
+                        c, sp, bl, g, lam = constrained_oasisAR1(
+                            fluor.astype(np.float32), g[0], sn, optimize_b=True, b_nonneg=bas_nonneg,
+                            optimize_g=optimize_g, penalty=penalty, s_min=0 if s_min is None else s_min)
+                    except:
+                        # JS
+                        print("Attempting 64bit precision")
+                        c, sp, bl, g, lam = constrained_oasisAR1(
+                            fluor.astype(np.float64), g[0], sn, optimize_b=True, b_nonneg=bas_nonneg,
+                            optimize_g=optimize_g, penalty=penalty, s_min=0 if s_min is None else s_min)
+                        bit_precision = '64'                        
                 else:
-                    c, sp, _, g, lam = constrained_oasisAR1(
-                        (fluor - bl).astype(np.float32), g[0], sn, optimize_b=False, penalty=penalty,
-                        s_min=0 if s_min is None else s_min)
+                    try:
+                        c, sp, _, g, lam = constrained_oasisAR1(
+                            (fluor - bl).astype(np.float32), g[0], sn, optimize_b=False, penalty=penalty,
+                            s_min=0 if s_min is None else s_min)
+                    except:
+                        # JS
+                        print("Attempting 64bit precision")
+                        c, sp, _, g, lam = constrained_oasisAR1(
+                                    (fluor - bl).astype(np.float64), g[0], sn, optimize_b=False, penalty=penalty,
+                                    s_min=0 if s_min is None else s_min)
+                        bit_precision='64'
+
 
                 c1 = c[0]
 
@@ -161,13 +178,25 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
             elif p == 2:
                 print("Running AR2 model")
                 if bl is None:
-                    c, sp, bl, g, lam = constrained_oasisAR2(
-                        fluor.astype(np.float32), g, sn, optimize_b=True, b_nonneg=bas_nonneg,
-                        optimize_g=optimize_g, penalty=penalty, s_min=s_min)
+                    try:
+                        c, sp, bl, g, lam = constrained_oasisAR2(
+                            fluor.astype(np.float32), g, sn, optimize_b=True, b_nonneg=bas_nonneg,
+                            optimize_g=optimize_g, penalty=penalty, s_min=s_min)
+                    except:
+                        c, sp, bl, g, lam = constrained_oasisAR2(
+                            fluor.astype(np.float64), g, sn, optimize_b=True, b_nonneg=bas_nonneg,
+                            optimize_g=optimize_g, penalty=penalty, s_min=s_min)      
+                        bit_precision = '64'                  
                 else:
-                    c, sp, _, g, lam = constrained_oasisAR2(
-                        (fluor - bl).astype(np.float32), g, sn, optimize_b=False,
-                        penalty=penalty, s_min=s_min)
+                    try:
+                        c, sp, _, g, lam = constrained_oasisAR2(
+                            (fluor - bl).astype(np.float32), g, sn, optimize_b=False,
+                            penalty=penalty, s_min=s_min)
+                    except:
+                        c, sp, _, g, lam = constrained_oasisAR2(
+                            (fluor - bl).astype(np.float64), g, sn, optimize_b=False,
+                            penalty=penalty, s_min=s_min)    
+                        bit_precision='64'                                            
                 c1 = c[0]
                 d = (g[0] + sqrt(g[0] * g[0] + 4 * g[1])) / 2
                 c -= c1 * d**np.arange(len(fluor))
@@ -943,7 +972,11 @@ def constrained_oasisAR2(y, g, sn, optimize_b=True, b_nonneg=True, optimize_g=0,
             for factor in (.7, .8, .9, 1):
                 c = c4smin(y - b, s, factor * s_min)
                 s = np.append([0, 0], c[2:] - g[0] * c[1:-1] - g[1] * c[:-2])
-        s[s < np.finfo(np.float32).eps] = 0
+        try:
+            s[s < np.finfo(np.float32).eps] = 0
+        except:
+            s[s < np.finfo(np.float64).eps] = 0
+
 
     return c, s, b, g, lam
 

@@ -5,12 +5,14 @@ channels:
 dependencies:
   # Core conda‑managed packages
   - python=3.9
+  - scikit-learn=1.5.0  
   - numpy
   - cython
   - h5py
   - rawpy
   - seaborn
   - oasis-deconv
+  - imbalanced-learn
 
   # Ensure pip is available
   - pip
@@ -21,7 +23,6 @@ dependencies:
     - pynwb==2.5.0 
     - pynapple==0.4.0  
     - hdmf<4.0.0,>=3.0.0 
-    - oasis-deconv
     - xmltodict
     - future
     - peakutils

@@ -885,8 +885,8 @@ class cellClassifier():
         df_clean, idx_rem = self.cleanup_classifier_data(self.df_train)
         # ← you need to have added `session_id` in gather_classifier_data() so it's a column here
         groups = df_clean['mouseName']                     ## ← NEW
-        X      = df_clean.drop(columns=['iscell','mouseName'])
         y      = df_clean['iscell']
+        X      = df_clean.drop(columns=['iscell','mouseName','fileName','cellIndex'])
 
         # 1) feature‐subset logic (unchanged)
         if preset_features:
@@ -1470,7 +1470,7 @@ class cellClassifier():
             duration = F.shape[1] / fs
 
             # get cell calcium event properties
-            peaks, widths_s, rise_s, fall_s, iei, amps, props, asymmetry, width_var, event_rate, pnr, snr_power = calcium_events(Fc=f, fs = fs, detrend_data = True, plot_progress = False)
+            peaks, widths_s, rise_s, fall_s, iei, amps, props, asymmetry, width_var, event_rate, pnr, pow_signal_noise = calcium_events(Fc=f, fs = fs, detrend_data = True, plot_progress = False)
 
             ts_features.append({
                 'event_count':        len(peaks),
@@ -1487,7 +1487,7 @@ class cellClassifier():
                 'fall_s':             fall_s,
                 'asymmetry':          asymmetry,
                 'width_var':          width_var,
-                'snr_power':          snr_power,
+                'pow_signal_noise':   pow_signal_noise,
                 'pnr':                pnr
             })
 
@@ -1533,7 +1533,7 @@ class cellClassifier():
         skew_vals = df_clean['skewF']
 
         # 2) Subset to the features we trained on
-        X = df_clean.drop(columns=['mouseName','iscell'])
+        X = df_clean.drop(columns=['iscell','mouseName','fileName','cellIndex'])
         X = X[self.selected_features]
 
         # 3) Generalist prediction
@@ -1649,7 +1649,7 @@ class cellClassifier():
             # asymmetry cutoff of 13s
             print("Tossing cells if their signal:noise power ratio at 0.25Hz is < 2")
             ts_dataframe = self.cell_dynamics(F=F, Fneu=Fneu, C=C, ops=ops)
-            iscell_out[(ts_dataframe.snr_power < 2)]=False
+            iscell_out[(ts_dataframe.pow_signal_noise < 2)]=False
 
             # find cells near one another amongst the true positives, then if strongly correlated, remove the weaker signal
             iscell_out = reject_overlapping_roi(stat=stat, F=F, Fneu=Fneu, C=C, iscell=iscell_out, fs=7.5)

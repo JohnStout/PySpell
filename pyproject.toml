@@ -1,17 +1,3 @@
-[tool.poetry]
-name = "pyspell"
-version = "0.1.0"
-description = "Python package for Tim Spellman lab"
-authors = ["Your Name <you@example.com>"]
-readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.9"
-suite2p = "0.14.2"
-pynwb  = "2.5.0"
-pynapple = "0.4.0"
-
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0", "wheel", "Cython", "numpy"]
+build-backend = "setuptools.build_meta"
