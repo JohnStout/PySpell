@@ -46,9 +46,9 @@ import shutil
 import scipy.io as sio
 
 # check path
-if 'PySpell'.lower() in os.path.split(os.getcwd())[-1].lower():
-    new_path = os.path.join(os.getcwd(),'code')
-    os.chdir(new_path)
+#if 'PySpell'.lower() in os.path.split(os.getcwd())[-1].lower():
+    #new_path = os.path.join(os.getcwd(),'pyspell')
+    #os.chdir(new_path)
 
 # these are for caiman-based deconvolution
 from scipy.stats import median_abs_deviation

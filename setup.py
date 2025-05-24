@@ -2,17 +2,16 @@ from setuptools import setup, Extension, find_packages
 from Cython.Build import cythonize
 import numpy as np
 
-# Map the 'pyspell/' directory as the source for the 'pyspell' package
 setup(
     name="pyspell",
     version="0.1.0",
-    package_dir={"": "pyspell"},            # Look for packages under pyspell/
-    packages=find_packages(where="pyspell"),  # Find any subpackages in pyspell/
+    package_dir={"": "pyspell"},
+    packages=find_packages(where="pyspell"),
     ext_modules=cythonize(
         [
             Extension(
-                "pyspell.oasis",                # Importable as pyspell.oasis
-                sources=["pyspell/oasis.pyx"],    # Point to the .pyx in pyspell/
+                "pyspell.oasis",
+                sources=["pyspell/oasis.pyx"],
                 include_dirs=[np.get_include()],
                 language="c++",
                 extra_compile_args=["-O2"],
@@ -21,7 +20,11 @@ setup(
         language_level="3",
     ),
     install_requires=[
-        # Runtime dependencies:
-        # "numpy>=1.18.0", "cython"
+        "numpy>=1.18.0",
+        "cython",
+        "xmltodict",
+        "h5py",
+        "suite2p>=0.14",   # let suite2p pull in its own preferred hdmf/pynwb versions
+        "emd-signal",
     ],
 )

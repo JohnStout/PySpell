@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from oasis import constrained_oasisAR1, oasisAR1
+#from .oasis import constrained_oasisAR1, oasisAR1
 
 def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, method_deconvolution='oasis', bas_nonneg=True,
                        noise_range=[.25, .5], noise_method='logmexp', lags=5, fudge_factor=1.,
