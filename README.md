@@ -7,10 +7,10 @@ Use the instructions below to **download**, configure, and install the package i
 ## Folder Structure
 
 ```
-/Dropbox/SpellmanToolbox/
+PySpell
 ├── README.md
 ├── setup.py
-├── environment.yml  # optional
+├── environment.yml
 └── pyspell/
     ├── __init__.py
     ├── s2pfuns.py         # code to run suite2p and postprocessing steps (detrending/deconvolution, ROI classification, cell-reg prep)
@@ -19,7 +19,10 @@ Use the instructions below to **download**, configure, and install the package i
     ├── deconvolution.py   # Straight from caiman
     ├── nwbfun.py          # In progress code to convert files to NWB format
     ├── sessreg.py         # Code to manage cell-reg preparation and may also house other options for cell alignment later
-    └── other modules (.py files)
+    └── scripts/
+        ├── __init__.py
+        ├── recurseConvert.py   # Script that handles automated image conversion, suite2p, ROI classification, cell-reg preparation and more
+        └── synchronizeToDropbox.py # Script that allows file-by-file synchronization to dropbox to work on the fly with light-weight files
 ```
 
 ## 1. Clone (Download) the Repository
