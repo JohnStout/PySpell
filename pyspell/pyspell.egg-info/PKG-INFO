@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: pyspell
+Version: 0.1.0
+Requires-Dist: numpy>=1.18.0
+Requires-Dist: cython
+Requires-Dist: xmltodict
+Requires-Dist: h5py
+Requires-Dist: suite2p>=0.14
+Requires-Dist: emd-signal
+Dynamic: requires-dist

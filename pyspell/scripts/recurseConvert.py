@@ -209,28 +209,28 @@ imgpaths = [
 
     # John folders
 
-    # {'Folder': r"E:\L6 Experiments\L608",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L612",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L613",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L614",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L616",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L607T4",                             'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\T30",                                'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"H:\Layer6\L615",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # # # {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+    {'Folder': r"E:\L6 Experiments\L608",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\L612",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\L613",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\L614",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\L616",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\L607T4",                             'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"E:\L6 Experiments\T30",                                'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"H:\Layer6\L615",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # # {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
     # # # {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
     # # # {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    # {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    #{'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
     # # # {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    # # #{'Folder': r"E:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+    {'Folder': r"E:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
 
-    # {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
 
-    {'Folder': r"I:\2PData3 - Alex\ChAB\ChB1_P04\D2B_IMG3_img",         'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': False, 'rerunClassifier': True}
-    #{'Folder': r"G:\2PData4\Alex",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True}
+    {'Folder': r"I:\2PData3 - Alex\ChAB",         'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    {'Folder': r"H:\ChC",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True}
 
 
     # MDT folderP80

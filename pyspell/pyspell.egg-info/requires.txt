@@ -1,0 +1,6 @@
+numpy>=1.18.0
+cython
+xmltodict
+h5py
+suite2p>=0.14
+emd-signal

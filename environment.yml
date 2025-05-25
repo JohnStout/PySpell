@@ -13,6 +13,8 @@ dependencies:
   - seaborn
   - oasis-deconv
   - imbalanced-learn
+  - ipykernel
+  - pyqt
 
   # Ensure pip is available
   - pip
@@ -27,4 +29,4 @@ dependencies:
     - future
     - peakutils
     - emd-signal
-    - -e .
+    #- -e .

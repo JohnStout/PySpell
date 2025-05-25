@@ -7,18 +7,7 @@ setup(
     version="0.1.0",
     package_dir={"": "pyspell"},
     packages=find_packages(where="pyspell"),
-    ext_modules=cythonize(
-        [
-            Extension(
-                "pyspell.oasis",
-                sources=["pyspell/oasis.pyx"],
-                include_dirs=[np.get_include()],
-                language="c++",
-                extra_compile_args=["-O2"],
-            )
-        ],
-        language_level="3",
-    ),
+
     install_requires=[
         "numpy>=1.18.0",
         "cython",
