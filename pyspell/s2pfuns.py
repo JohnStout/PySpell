@@ -805,7 +805,7 @@ class postProcess():
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L608_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SEDS_day2_FOV1_LBC0_optoRec_img\suite2p\plane0")
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L605_M_RightPFC_L6Chr_PFCgcamp6f_L6L5\SEDS_day11_FOV4_optoRec_noProbe_LBC0_img\suite2p\plane0")
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L614_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SDswitch_day10_FOV1_LBC2_optoRec_img\suite2p\plane0")
-#self = cellClassifier(load_classifier=True, model_path=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_gridSearch_addedParams_sessionScale.pkl'))
+#self = cellClassifier(load_classifier=True, model_path=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
 class cellClassifier():
     '''
     Classifier for calcium imaging ROI.
@@ -968,8 +968,8 @@ class cellClassifier():
 
         # ← you need to have added `session_id` in gather_classifier_data() so it's a column here
         groups = df_clean['mouseName']                     ## ← NEW
-        X      = df_clean.drop(columns=['iscell','mouseName','fileName','cellIndex'])
         y      = df_clean['iscell']
+        X      = df_clean.drop(columns=['iscell','mouseName','fileName','cellIndex'])
 
         # 1) feature‐subset logic (unchanged)
         if preset_features:
@@ -1881,8 +1881,8 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
             if med_dist < 15 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
 
                 # detect event peaks
-                idx_peaks_i  = calcium_events(c = C[i], Fc = Fcor[i])[0]
-                idx_peaks_ii = calcium_events(c = C[ii], Fc = Fcor[ii])[0]
+                idx_peaks_i  = calcium_events(Fc = Fcor[i])[0]
+                idx_peaks_ii = calcium_events(Fc = Fcor[ii])[0]
                 
                 # search over all events in cell #ii
                 peakii_overlap = []
