@@ -1,6 +1,8 @@
 # pyspell
 
-This repository contains the **pyspell** toolbox, including a Cython extension (`oasis`) that must be built locally on each machine. Use the instructions below to **download**, configure, and install the package in an isolated environment.
+This repository contains the **pyspell** toolbox.
+
+Use the instructions below to **download**, configure, and install the package in an isolated environment.
 
 ## Folder Structure
 
@@ -11,9 +13,12 @@ This repository contains the **pyspell** toolbox, including a Cython extension (
 ├── environment.yml  # optional
 └── pyspell/
     ├── __init__.py
-    ├── s2pfuns.py
-    ├── thorfuns.py       # generated
-    ├── rootfun.py         # generated
+    ├── s2pfuns.py         # code to run suite2p and postprocessing steps (detrending/deconvolution, ROI classification, cell-reg prep)
+    ├── thorfuns.py        # code to manage thorlabs 2P imaging files for conversion
+    ├── rootfun.py         # some directory management
+    ├── deconvolution.py   # Straight from caiman
+    ├── nwbfun.py          # In progress code to convert files to NWB format
+    ├── sessreg.py         # Code to manage cell-reg preparation and may also house other options for cell alignment later
     └── other modules (.py files)
 ```
 
@@ -44,7 +49,7 @@ conda env update -f environment.yml --prune
 conda activate pyspell
 ```
 
-> **Note:** This sets up Python 3.9, NumPy, Cython, oasis-deconv (prebuilt), and all other requirements, including installing this repo with `-e .`.
+> **Note:** This sets up Python 3.9, NumPy, oasis-deconv (prebuilt), and all other requirements.
 
 
 ## 3. Verify Installation
