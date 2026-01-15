@@ -440,6 +440,368 @@ class postProcess():
                 np.save(os.path.join(self.s2ppath,'S.npy'), S); print("Saved deconvolved spikes (S)")
             return C, S
 
+    # -- method to run OASIS with adaptive threshold (ported from MATLAB) -- #
+    def cleanup_raw_traces_adaptive(self, fr: float = None, verbose: int = 1, 
+                                     ar_order: str = 'ar1', replace_rename: bool = False):
+        '''
+        Multi-pass adaptive deconvolution using OASIS algorithm.
+        
+        Ported from Tim's MATLAB cleanupRawTracesTim_AdaptiveThreshold.
+        
+        Uses OASIS algorithm for fast, exact deconvolution.
+        Starts with a liberal noise estimate (low SNS) and incrementally increases
+        until a composite quality metric crosses a threshold indicating the
+        deconvolution is no longer detecting excessive noise spikes.
+
+        The composite metric is based on: A/ResidVar, |ResidAC1|, SN, Lambda
+        Threshold was calibrated from manual quality scoring (Q=5 ideal, Q>=6 noisy).
+
+        Args:
+            >>> fr: frame rate in Hz. If None, uses self.ops['fs']
+            >>> verbose: 0 = silent, 1 = summary, 2 = per-cell progress (default: 1)
+            >>> ar_order: 'ar1' (faster) or 'ar2' (more accurate for GCaMP6) (default: 'ar1')
+            >>> replace_rename: if True, renames original F/spks files and saves C/S in their place
+        
+        Returns:
+            >>> C: denoised calcium traces (neurons x timepoints)
+            >>> S: deconvolved spike estimates (neurons x timepoints)
+            >>> metrics: dict containing A, SN, SNS_final, Lambda, ResidVar, ResidAC1, compositeScore
+        
+        John Stout - Ported from Tim Spellman's MATLAB code (Jan 2026)
+        '''
+        
+        import deconvolution as dc
+        from scipy.optimize import curve_fit
+        
+        # Get frame rate
+        if fr is None:
+            fr = self.ops.get('fs', 2.85)
+        
+        # === THRESHOLD PARAMETERS ===
+        # Reference values (from Q=5 ideal cells)
+        REF_A_RV_MEAN = 1.0
+        REF_A_RV_STD = 0.5
+        REF_AC1_MEAN = 0.05
+        REF_AC1_STD = 0.03
+        REF_SN_MEAN = 0.05
+        REF_SN_STD = 0.02
+        REF_LAMBDA_MEAN = -0.05
+        REF_LAMBDA_STD = 0.03
+        
+        # Signs: +1 if higher value means more noisy, -1 if lower means more noisy
+        SIGN_A_RV = 1
+        SIGN_AC1 = 1
+        SIGN_SN = -1
+        SIGN_LAMBDA = 1
+        
+        # Composite threshold (values above this indicate too many noise spikes)
+        COMPOSITE_THRESHOLD = 2.0
+        
+        # === SNS SEARCH PARAMETERS ===
+        SNS_START = 1.5      # Starting (liberal) noise multiplier
+        SNS_INCREMENT = 0.5  # Step size
+        SNS_MAX = 6.0        # Maximum SNS to try
+        
+        # Initialize outputs
+        nNeurons = self.F.shape[0]
+        nTimepoints = self.F.shape[1]
+        
+        C = np.zeros((nNeurons, nTimepoints))
+        S = np.zeros((nNeurons, nTimepoints))
+        A = np.zeros(nNeurons)
+        SN = np.zeros(nNeurons)
+        SNS_final = np.zeros(nNeurons)
+        Lambda = np.zeros(nNeurons)
+        ResidVar = np.zeros(nNeurons)
+        ResidAC1 = np.zeros(nNeurons)
+        compositeScore = np.zeros(nNeurons)
+        
+        # Progress tracking
+        progressInterval = max(1, nNeurons // 10)
+        process_start = time.process_time()
+        
+        for x in range(nNeurons):
+            if verbose >= 2:
+                print(f'Cell {x+1}/{nNeurons}: ', end='')
+            elif verbose >= 1 and (x % progressInterval == 0 or x == nNeurons - 1):
+                print('.', end='', flush=True)
+            
+            try:
+                # === PREPROCESSING ===
+                f = self.F[x, :].astype(np.float64) - 0.7 * self.Fneu[x, :].astype(np.float64)
+                
+                if np.all(f == 0) or np.all(np.isnan(f)) or np.std(f) == 0:
+                    SNS_final[x] = np.nan
+                    compositeScore[x] = np.nan
+                    if verbose >= 2:
+                        print('SKIP')
+                    continue
+                
+                # Sgolay detrending with event removal
+                f2 = np.concatenate([f, np.median(f) * np.ones(1000)])
+                mad_f = np.median(np.abs(f - np.median(f)))
+                f2[f2 > np.median(f) + 3 * mad_f] = np.nan
+                validIdx = np.where(~np.isnan(f2))[0]
+                
+                if len(validIdx) < 10:
+                    SNS_final[x] = np.nan
+                    compositeScore[x] = np.nan
+                    if verbose >= 2:
+                        print('SKIP')
+                    continue
+                
+                f2 = np.interp(np.arange(len(f2)), validIdx, f2[validIdx])
+                
+                # Sgolay filter window
+                win = int(round(150 * fr))
+                if win % 2 == 0:
+                    win += 1
+                win = min(win, len(f2) - 1)
+                if win < 3:
+                    win = 3
+                
+                f3 = savgol_filter(f2, win, 2)
+                f3 = f3[:len(f)]
+                f = f - f3 + np.median(f)
+                
+                # Running baseline subtraction
+                win_perc = int(round(250 * fr))
+                lows = self._running_percentile(f, win_perc, 5)
+                lows = gaussian_filter1d(lows, win_perc // 4)
+                f = f - lows + np.median(f)
+                
+                # Bleaching/drift correction
+                pks = self._running_percentile(f, win_perc, 99)
+                pks = gaussian_filter1d(pks, int(round(500 * fr)) // 4)
+                
+                med_f = np.median(f)
+                med_pks = np.median(pks)
+                pks_above_baseline = pks - med_f
+                med_pks_above = med_pks - med_f
+                if med_pks_above <= 0 or not np.isfinite(med_pks_above):
+                    med_pks_above = 1
+                pks_above_baseline = np.maximum(pks_above_baseline, 0.1 * med_pks_above)
+                pksTmp = med_pks_above / pks_above_baseline
+                pksTmp = np.clip(pksTmp, 0.3, 3.0)
+                f = med_f + (f - med_f) * pksTmp
+                f[f < 0] = 0
+                
+                # Normalize
+                med_f = np.median(f)
+                if med_f == 0 or not np.isfinite(med_f):
+                    med_f = 1
+                f_norm = f / med_f
+                f_norm[~np.isfinite(f_norm)] = np.nanmedian(f_norm)
+                
+                # Base noise estimate
+                below_med = f_norm[f_norm < np.median(f_norm)]
+                if len(below_med) < 5:
+                    sn_base = np.std(f_norm)
+                else:
+                    sn_base = np.std(below_med)
+                if sn_base == 0 or not np.isfinite(sn_base):
+                    sn_base = 0.1
+                
+                # === MULTI-PASS ADAPTIVE SEARCH ===
+                sns_current = SNS_START
+                best_sns = sns_current
+                best_composite = np.inf
+                best_c = np.zeros_like(f_norm)
+                best_sp = np.zeros_like(f_norm)
+                best_a_hat = 1
+                best_sn = 0
+                best_lambda = 0
+                best_rv = 0
+                best_ac1 = 0
+                
+                # AR order for OASIS
+                p = 1 if ar_order == 'ar1' else 2
+                
+                while sns_current <= SNS_MAX:
+                    sn_est = sn_base * sns_current
+                    
+                    try:
+                        # Run OASIS deconvolution
+                        c, bl, c1, g, sn_out, sp, lam = dc.constrained_foopsi(
+                            f_norm.astype(np.float32), p=p, method_deconvolution='oasis',
+                            bas_nonneg=True, noise_range=[0.25, 0.5], noise_method='logmexp',
+                            sn=sn_est, lags=5, fudge_factor=1, solvers=None, verbosity=False
+                        )
+                        
+                        # Check for failed deconvolution
+                        if np.all(c == 0) and np.all(sp == 0):
+                            if verbose >= 2:
+                                print(f'(zero output at SNS={sns_current:.1f}) ', end='')
+                            sns_current += SNS_INCREMENT
+                            continue
+                        
+                        # Compute amplitude
+                        denom = np.dot(c, c)
+                        if denom > 0:
+                            a_hat = np.dot(c, f_norm - bl) / denom
+                        else:
+                            a_hat = 1
+                        if not np.isfinite(a_hat) or a_hat <= 0:
+                            a_hat = 1
+                        
+                        # Compute metrics
+                        resid = f_norm - bl - c
+                        rv = np.var(resid) / (sn_est ** 2)
+                        
+                        resid_centered = resid - np.mean(resid)
+                        ac_num = np.sum(resid_centered[:-1] * resid_centered[1:])
+                        ac_denom = np.sum(resid_centered ** 2)
+                        ac1 = ac_num / ac_denom if ac_denom > 1e-10 else 0
+                        
+                        # Lambda (exponential tail fit)
+                        sp_norm = sp / a_hat
+                        sp_nz = sp_norm[sp_norm > 0]
+                        lambda_val = np.nan
+                        if len(sp_nz) >= 20:
+                            q = np.percentile(sp_nz, np.linspace(0, 100, 101))
+                            qf = q[85:]
+                            if len(np.unique(qf)) >= 3:
+                                try:
+                                    def exp_func(x, a, b):
+                                        return a * np.exp(b * x)
+                                    popt, _ = curve_fit(exp_func, np.arange(len(qf)), qf, 
+                                                       p0=[qf[0], -0.1], maxfev=1000)
+                                    lambda_val = -popt[1]
+                                except:
+                                    lambda_val = np.nan
+                        
+                        # Compute composite score
+                        A_RV = a_hat / (rv + 1e-10)
+                        
+                        z_A_RV = (A_RV - REF_A_RV_MEAN) / REF_A_RV_STD
+                        z_AC1 = (np.abs(ac1) - REF_AC1_MEAN) / REF_AC1_STD
+                        z_SN = (sn_est - REF_SN_MEAN) / REF_SN_STD
+                        z_Lambda = (lambda_val - REF_LAMBDA_MEAN) / REF_LAMBDA_STD if np.isfinite(lambda_val) else 0
+                        
+                        composite = (SIGN_A_RV * z_A_RV + SIGN_AC1 * z_AC1 + 
+                                    SIGN_SN * z_SN + SIGN_LAMBDA * z_Lambda)
+                        
+                        if verbose >= 2:
+                            print(f'SNS={sns_current:.1f}: comp={composite:.2f} ', end='')
+                        
+                        # Track best result
+                        if composite < best_composite:
+                            best_composite = composite
+                            best_sns = sns_current
+                            best_c = c.copy()
+                            best_sp = sp_norm.copy()
+                            best_a_hat = a_hat
+                            best_sn = sn_est
+                            best_lambda = lambda_val
+                            best_rv = rv
+                            best_ac1 = ac1
+                        
+                        # Stop if composite exceeds threshold
+                        if composite > COMPOSITE_THRESHOLD:
+                            if verbose >= 2:
+                                print('STOP (threshold exceeded)')
+                            break
+                        
+                    except Exception as e:
+                        if verbose >= 2:
+                            print(f'(error at SNS={sns_current:.1f}: {str(e)[:30]}) ', end='')
+                    
+                    sns_current += SNS_INCREMENT
+                
+                if verbose >= 2 and sns_current > SNS_MAX:
+                    print('MAX reached')
+                
+                # Store results
+                C[x, :] = best_c
+                S[x, :] = best_sp
+                A[x] = best_a_hat
+                SN[x] = best_sn
+                SNS_final[x] = best_sns
+                Lambda[x] = best_lambda
+                ResidVar[x] = best_rv
+                ResidAC1[x] = best_ac1
+                compositeScore[x] = best_composite
+                
+            except Exception as e:
+                if verbose >= 2:
+                    print(f'ERROR: {str(e)}')
+                SNS_final[x] = np.nan
+                compositeScore[x] = np.nan
+        
+        # Summary
+        if verbose >= 1:
+            print()  # newline after dots
+            validCells = ~np.isnan(SNS_final)
+            print('=== Adaptive Threshold Summary ===')
+            print(f'Processed: {np.sum(validCells)}/{nNeurons} cells')
+            if np.sum(validCells) > 0:
+                print(f'SNS_final: median={np.median(SNS_final[validCells]):.2f}, '
+                      f'range=[{np.min(SNS_final[validCells]):.2f}, {np.max(SNS_final[validCells]):.2f}]')
+                print(f'Composite: median={np.median(compositeScore[validCells]):.2f}, '
+                      f'range=[{np.min(compositeScore[validCells]):.2f}, {np.max(compositeScore[validCells]):.2f}]')
+            print(f'Time: {(time.process_time() - process_start)/60:.2f} min')
+        
+        # Store in self
+        self.C = C
+        self.S = S
+        
+        # Pack metrics
+        metrics = {
+            'A': A,
+            'SN': SN,
+            'SNS_final': SNS_final,
+            'Lambda': Lambda,
+            'ResidVar': ResidVar,
+            'ResidAC1': ResidAC1,
+            'compositeScore': compositeScore
+        }
+        
+        # Save results
+        print(f"Saving results to {self.s2ppath}")
+        if replace_rename:
+            print("Renaming F to F_s2p and spks to spks_s2p and saving C as F and S as spks...")
+            if os.path.exists(os.path.join(self.s2ppath, 'F.npy')):
+                os.rename(os.path.join(self.s2ppath, 'F.npy'), os.path.join(self.s2ppath, 'F_s2p.npy'))
+            if os.path.exists(os.path.join(self.s2ppath, 'spks.npy')):
+                os.rename(os.path.join(self.s2ppath, 'spks.npy'), os.path.join(self.s2ppath, 'spks_s2p.npy'))
+            np.save(os.path.join(self.s2ppath, 'F.npy'), C)
+            np.save(os.path.join(self.s2ppath, 'spks.npy'), S)
+        else:
+            np.save(os.path.join(self.s2ppath, 'C_adaptive.npy'), C)
+            np.save(os.path.join(self.s2ppath, 'S_adaptive.npy'), S)
+            np.save(os.path.join(self.s2ppath, 'deconv_metrics.npy'), metrics)
+        
+        print("Saved denoised fluorescence (C) and deconvolved spikes (S)")
+        
+        return C, S, metrics
+
+    def _running_percentile(self, x: np.ndarray, window: int, percentile: float) -> np.ndarray:
+        """
+        Compute running percentile over a 1D signal.
+        
+        Args:
+            >>> x: 1D array of values
+            >>> window: window size (number of samples)
+            >>> percentile: percentile to compute (0-100)
+        
+        Returns:
+            >>> result: running percentile with same shape as x
+        """
+        from scipy.ndimage import generic_filter
+        
+        # Ensure window is odd
+        if window % 2 == 0:
+            window += 1
+        window = max(3, min(window, len(x)))
+        
+        # Use generic_filter with percentile function
+        def percentile_func(values):
+            return np.percentile(values, percentile)
+        
+        result = generic_filter(x.astype(np.float64), percentile_func, size=window, mode='nearest')
+        
+        return result
+
     # -- methods to clean-up the F trace
     def sgolay_detrend(self, f):
         '''
@@ -801,10 +1163,11 @@ class postProcess():
 #self = cellClassifier(training_sessions_directory=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p'))
 #self.check_classifier_loso(auto_feature_select=False, preset_features=False, feature_list=None)
 #self.build_classifier(preset_features=True, grid_search=True, drop_nan=True, skew_classifier=False)
-#self.save_model(filepath=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
+#self.save_model(filepath=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L608_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SEDS_day2_FOV1_LBC0_optoRec_img\suite2p\plane0")
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L605_M_RightPFC_L6Chr_PFCgcamp6f_L6L5\SEDS_day11_FOV4_optoRec_noProbe_LBC0_img\suite2p\plane0")
 #self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L614_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN\SDswitch_day10_FOV1_LBC2_optoRec_img\suite2p\plane0")
+#self.classify(session_path=r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L612_F_RightPFC_L6Chr_PFCgcamp8f_L6PAN\SEDS_day7_LBC2_p70_optoRec_FOV1_img\suite2p\plane0")
 #self = cellClassifier(load_classifier=True, model_path=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
 class cellClassifier():
     '''
@@ -1470,7 +1833,7 @@ class cellClassifier():
             duration = F.shape[1] / fs
 
             # get cell calcium event properties
-            peaks, widths_s, rise_s, fall_s, iei, amps, props, asymmetry, width_var, event_rate, pnr, pow_signal_noise = calcium_events(Fc=f, fs = fs, detrend_data = True, plot_progress = False)
+            peaks, widths_s, rise_s, fall_s, iei, amps, props, asymmetry, width_var, event_rate, pnr, pow_signal_noise = calcium_events(Fc=f, fs = fs, detrend_data = True, height_multiplier=3.0)
 
             ts_features.append({
                 'event_count':        len(peaks),
@@ -1881,8 +2244,8 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
             if med_dist < 15 and iscell[i]==True and iscell[ii]==True: #and iscell[i] == True and iscell[ii] == True:
 
                 # detect event peaks
-                idx_peaks_i  = calcium_events(Fc = Fcor[i])[0]
-                idx_peaks_ii = calcium_events(Fc = Fcor[ii])[0]
+                idx_peaks_i  = calcium_events(Fc = Fcor[i],  height_multiplier=3.0, event_duration = None)[0]
+                idx_peaks_ii = calcium_events(Fc = Fcor[ii], height_multiplier=3.0, event_duration = None)[0]
                 
                 # search over all events in cell #ii
                 peakii_overlap = []
@@ -1945,16 +2308,17 @@ def reject_overlapping_roi(stat, F, Fneu, C, iscell, fs = 7.5):
 def calcium_events(Fc,
                    fs: float = 7.5,
                    detrend_data: bool = True,
-                   plot_progress: bool = False):
+                   plot_progress: bool = False,
+                   height_multiplier: float = 3.0,
+                   peak_distance: float = 15,                   
+                   prominence_multiplier: float = 3.0,
+                   event_duration = None):
     """
     Detect calcium‐event peaks in a trace and extract both time‐ and
     frequency‐domain features.  
 
     Parameters
     ----------
-    c : array_like, shape (N,)
-        Raw calcium trace (e.g. ΔF/F).  *Not* directly used here but kept
-        for compatibility if you want event detection on `c` instead.
     Fc : array_like, shape (N,)
         Neuropil‐corrected fluorescence. If `detrend_data`, will be
         passed through `sgolay_detrend` first.
@@ -1964,6 +2328,23 @@ def calcium_events(Fc,
         If True, apply `sgolay_detrend` to `Fc` before anything else.
     plot_progress : bool, default=False
         If True, show diagnostic plots of detected peaks and the PSD ratio.
+    height_multiplier : float, default=3.0
+        Multiplier for the `height` parameter in `find_peaks`.
+        This is used to filter out noise events.
+    peak_distance : float, default=15
+        Minimum distance between detected peaks in seconds. This is
+        used to prevent detecting too many peaks in a short time span.
+
+    **DETECTING MORE EVENTS AT THE COST OF NOISE**
+    Higher prominence_multiplier values will result in fewer detected peaks,
+    while lower values will detect more peaks, but may also include noise.
+
+    prominence_multiplier : float, default=3.0, accepts None
+        Multiplier for the `prominence` parameter in `find_peaks`.
+        This is used to filter out noise events.
+        ***SET to NONE to disable prominence filtering.***
+            -> This will help detect more peaks, but may also
+            -> include more noise events.        
 
     Returns
     -------
@@ -1992,6 +2373,12 @@ def calcium_events(Fc,
     snr_power : float
         Mean ratio of signal‐PSD to noise‐PSD across all frequencies.
 
+        
+    UPDATES:
+        6/11/2025 - John Stout - Added prominence_multiplier to allow for more flexibility in peak detection.
+        6/11/2025 - John Stout - Added height_multiplier to allow for more flexibility in peak detection.
+        6/11/2025 - John Stout - Added peak_distance to allow for more flexibility in peak detection.
+        ALL UPDATES ON 6/11/2025 WERE CHANGED FROM HARDCODE TO FLEXIBLE PARAMETERS
     """
     from scipy.signal import savgol_filter, welch
 
@@ -2018,22 +2405,40 @@ def calcium_events(Fc,
     noise_top = np.percentile(noise, 99)
 
     # find events that are at least 3x the size of the top noise
-    height_thr = noise_top * 3
+    height_thr = noise_top * height_multiplier
 
     # smooth signal with 3rd degree savistky golay filter to preserve shape
     #Fc = savgol_filter(Fc, window_length= int(fs*2), polyorder=3)
 
     # minimum distance between events
-    min_dist = int(fs * 15)  # at least 15 seconds between peaks
+    min_dist = int(fs * peak_distance)  # at least 15 seconds between peaks
 
     # find peaks with smoothed Fc
-    peaks, props = find_peaks(
-        Fc,
-        height = height_thr,
-        distance = min_dist,
-        prominence = noise_top * 3,
-        width=(fs*0.5, fs*5) # min of .5s max of 5s
-    )
+    if prominence_multiplier is None:
+        peaks, props = find_peaks(
+            Fc,
+            height = height_thr,
+            distance = min_dist
+            #width=(fs*event_duration[0], fs*event_duration[1]) # signal duration min of .5s max of 5s
+        )   
+    else:  
+        if event_duration is None:
+            peaks, props = find_peaks(
+                Fc,
+                height = height_thr,
+                distance = min_dist,
+                prominence = noise_top * prominence_multiplier
+            )        
+        else:
+            peaks, props = find_peaks(
+                Fc,
+                height = height_thr,
+                distance = min_dist,
+                prominence = noise_top * prominence_multiplier,
+                width=(fs*event_duration[0], fs*event_duration[1]) # signal duration min of .5s max of 5s
+            )
+
+    # get amplitudes of the peaks
     amps = props['peak_heights']
 
     # 3) Half‑width at half‑height and crossing points with normal Fc

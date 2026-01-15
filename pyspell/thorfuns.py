@@ -8,6 +8,9 @@
 # Essentially, we map a file to disk via memory mapping, then write chunks of data to memory.
 # The chunks of data take up memory and so we continuously delete what we previously used to conserve memory.
 #
+#
+# 07/20s - 08/5: JS and VC added thorfuns function to convert camera data
+#
 # John Stout
 
 # packages
@@ -29,14 +32,17 @@ import rawpy
 from pathlib import Path
 import sys
 import cv2
+import glob
+from tqdm import tqdm
+from natsort import natsorted
 
 # load imgfuns
-try:
-    import imgfuns
-except:
-    #os.chdir(os.path.join(os.getcwd(),'code'))
-    sys.path.append(str(Path(__file__).resolve().parent))
-    import imgfuns
+#try:
+#    import imgfuns
+#except:
+#    #os.chdir(os.path.join(os.getcwd(),'code'))
+#    sys.path.append(str(Path(__file__).resolve().parent))
+#    import imgfuns
 # TODO: RECHECK AND VALIDATE ALL FUNCTIONS IN CONVERT
 # TODO: CHECK 4D, Validate suite2p and max-proj
 # TODO: Validate with single plane data
@@ -610,7 +616,6 @@ def interp_img(img):
 
     return img_interp
 
-
 def fname_new(rootpath,fname):
     '''
     This code searches for existing fnames and updates the naming convention as to prevent overwrite
@@ -650,7 +655,7 @@ def remTif(fname):
 # converting behavioral data
 # TODO: Build a GUI that allows to user to fix behavioral/recording issues
 # for example, the user may have the wrong order of recording buttons or maybe didnt stop thorsync while xploring data generating piezo motor errors that misalign data
-def importThorsync(bpath):
+def importThorsync(bpath, imgdata_present=True):
     '''
     importThorSync
         Equivalent to the MATLAB version. Written by John Stout
@@ -659,6 +664,7 @@ def importThorsync(bpath):
 
     Args:
         >>> bpath: path to behavioral data, including the .h5 extension
+        >>> imgdata_present: boolean to indicate if imaging data is present. If True, the code will check for misalignment of behavioral and imaging data
 
     John Stout merged written code with copilot  
 
@@ -713,35 +719,36 @@ def importThorsync(bpath):
     #    bData[key][index:-1] = 0.0
 
     # Index of frame times for behavior
-    frameTimes = np.where(np.diff(bData['FrameOut'],axis=0)==1)[0]
+    if imgdata_present:
+        frameTimes = np.where(np.diff(bData['FrameOut'],axis=0)==1)[0]
 
-    # piezo cycles
-    piezo = dataIn['AI']['PiezoMonitor'][:]
-    piezo_norm = np.ravel(piezo/np.max(piezo)) # scale to 1 and convert to 1D
+        # piezo cycles
+        piezo = dataIn['AI']['PiezoMonitor'][:]
+        piezo_norm = np.ravel(piezo/np.max(piezo)) # scale to 1 and convert to 1D
 
-    # when recordings start, the piezo kicks on
-    idx_offrec = np.where(piezo_norm < 0.3)[0]
+        # when recordings start, the piezo kicks on
+        idx_offrec = np.where(piezo_norm < 0.3)[0]
 
-    # make sure that the first and last value of idx_offrec are outside of frameIdx
-    good_rec = ( (idx_offrec[0] < frameTimes[0]) & (idx_offrec[-1] > frameTimes[-1]) )
-    #assert good_rec==True, "Your behavioral data are misaligned with your imaging data. Use this session to modify the code"
-    if good_rec == False:
+        # make sure that the first and last value of idx_offrec are outside of frameIdx
+        good_rec = ( (idx_offrec[0] < frameTimes[0]) & (idx_offrec[-1] > frameTimes[-1]) )
+        #assert good_rec==True, "Your behavioral data are misaligned with your imaging data. Use this session to modify the code"
+        if good_rec == False:
 
-        # if the first frame index is less than the first flatlined piezo, that means the experimenter started recording their
-        # imaging data before starting thorsync. This happens because the piezo turns on when you hit start on the img software. So there
-        # was never a flatlined piezo
-        img_too_soon = frameTimes[0] < idx_offrec[0] # you started recording img too soon
+            # if the first frame index is less than the first flatlined piezo, that means the experimenter started recording their
+            # imaging data before starting thorsync. This happens because the piezo turns on when you hit start on the img software. So there
+            # was never a flatlined piezo
+            img_too_soon = frameTimes[0] < idx_offrec[0] # you started recording img too soon
 
-        # the experimenter stopped thorsync before the img rec. The last index of frameIdx > last index of piezo.
-        img_too_late = frameTimes[-1] > idx_offrec[-1] # you stopped recording img too late
+            # the experimenter stopped thorsync before the img rec. The last index of frameIdx > last index of piezo.
+            img_too_late = frameTimes[-1] > idx_offrec[-1] # you stopped recording img too late
 
-        # if img_too_late
-        if img_too_late:
-            print("Experimenter turned off 1) ThorSync then 2) ThorImg. Trim end of imaging data.")
-            save_tag = "_trimImgEnd"
-        elif img_too_soon:
-            print("Experimenter turned on 1) ThorImg then 2) ThorSync. Trim the start of imaging data.")
-            save_tag = "_trimImgStart"
+            # if img_too_late
+            if img_too_late:
+                print("Experimenter turned off 1) ThorSync then 2) ThorImg. Trim end of imaging data.")
+                save_tag = "_trimImgEnd"
+            elif img_too_soon:
+                print("Experimenter turned on 1) ThorImg then 2) ThorSync. Trim the start of imaging data.")
+                save_tag = "_trimImgStart"
 
     # Extract velocity data from treadmill rotations
     if 'RotaryA' in bData and 'RotaryB' in bData:
@@ -764,7 +771,8 @@ def importThorsync(bpath):
         bData['Velocity'] = np.diff(np.convolve(position, np.ones(100)/100, mode='same')) * 1000  # convert to cm/sec assuming 1kHz sample rate
 
     # Fit the other behavioral variables based on frameTimes
-    frameData = {k: v[frameTimes] for k, v in bData.items()}
+    if imgdata_present:
+        frameData = {k: v[frameTimes] for k, v in bData.items()}
 
     # Get trial data
     trialStartTimes = np.where(np.diff(bData['trialOut']) == 1)[0]
@@ -842,11 +850,16 @@ def importThorsync(bpath):
     assert_same_length(trialData, "trialData")
 
     # make into a dict
-    beh_dict = {'timesData': timesData,
-                'trialData': trialData,
-                'frameData': frameData,
-                'bData': bData,
-                'frameTimes': frameTimes}
+    if imgdata_present:
+        beh_dict = {'timesData': timesData,
+                    'trialData': trialData,
+                    'frameData': frameData,
+                    'bData': bData,
+                    'frameTimes': frameTimes}
+    else:
+        beh_dict = {'timesData': timesData,
+                    'trialData': trialData,
+                    'bData': bData}
 
     # save the variable as .npy file
     #np.save(os.path.join(bpath,'behPy.npy'), beh_dict, allow_pickle = True)
@@ -856,27 +869,349 @@ def importThorsync(bpath):
     timesData['trialStartTimes'] = timesData['trialStartTimes'] + 1
     timesData['trialEndTimes'] = timesData['trialEndTimes'] + 1
     trialData['trial'] = [i+1 if not np.isnan(i) else i for i in trialData['trial']]
-    frameTimes = frameTimes + 1
+    
+    if imgdata_present:
+        frameTimes = frameTimes + 1
 
     # save - updated on 5/6/2025
-    if good_rec == False:
-        sio.savemat(os.path.join(bpath,'beh'+save_tag+'.mat'), {
-            #'timesData': timesData,
-            'trialData': trialData,
-            'bData': bData,
-            #'frameData': frameData,
-            #'frameTimes': frameTimes,
-            }
-        )
+    if imgdata_present:
+        if good_rec == False:
+            sio.savemat(os.path.join(bpath,'beh'+save_tag+'.mat'), {
+                #'timesData': timesData,
+                'trialData': trialData,
+                'bData': bData,
+                #'frameData': frameData,
+                #'frameTimes': frameTimes,
+                }
+            )
+        else:
+            sio.savemat(os.path.join(bpath,'beh.mat'), {
+                #'timesData': timesData,            
+                'trialData': trialData,
+                'bData': bData,
+                #'frameData': frameData,
+                #'frameTimes': frameTimes,
+                }
+            )
     else:
         sio.savemat(os.path.join(bpath,'beh.mat'), {
             #'timesData': timesData,            
             'trialData': trialData,
             'bData': bData,
-            #'frameData': frameData,
-            #'frameTimes': frameTimes,
             }
         )
+
+# Code below is for tif stitching
+#TODO: This really needs to be cleaned up and documented
+
+from functools import partial              # keeps tqdm nicely separated
+from tqdm import tqdm
+import concurrent.futures, glob, os
+from typing import Union, Iterable
+
+def batch_stitch_folders(
+        root_glob: Union[Iterable[str], str],
+         fps: float = 16.5,
+         folders_parallel = None,
+         **stitch_kw):
+        
+    """
+    root_glob       : one or many glob patterns, e.g. r"Z:/data/**/img_*"
+    fps             : camera fps to pass to stitch_cam_to_avi
+    folders_parallel: # of concurrent folder jobs (defaults to N CPU cores)
+    **stitch_kw     : forwarded to stitch_cam_to_avi
+                      (workers, pages_per_chunk, max_inflight, delete_tifs…)
+    """
+    # ‑‑ discover folders --------------------------------------------------
+    if isinstance(root_glob, str):
+        root_glob = [root_glob]
+
+    folders = []
+    for pat in root_glob:
+        folders.extend([f for f in glob.glob(pat, recursive=True)
+                          if os.path.isdir(f)])
+
+    if not folders:
+        raise RuntimeError("No folders matched the pattern(s).")
+
+    print(f"▶  Found {len(folders)} folders to stitch.")
+
+    # ‑‑ run in parallel ---------------------------------------------------
+    max_jobs = folders_parallel or max(os.cpu_count() - 1, 1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_jobs) as ex:
+        futs = {
+            ex.submit(stitch_cam_to_avi, fld, fps=fps, **stitch_kw): fld
+            for fld in folders
+        }
+
+        for fut in concurrent.futures.as_completed(futs):
+            fld = futs[fut]
+            try:
+                fut.result()
+                print(f"✅  {fld} done")
+            except Exception as e:
+                print(f"❌  {fld} failed: {e}")
+
+def stitch_cam_to_avi(tif_folder, fps=16.5, delete_tifs=False,
+                      workers=8, pages_per_chunk=345,
+                      max_inflight=4):
+    """
+    • Detects _C1_ and _C2_ multipage‑TIFF stacks.
+    • Launches one parallel job per camera so the two AVIs are written
+      side‑by‑side instead of sequentially.
+    """
+
+    # 1.  discover stacks per camera ---------------------------------
+    tif_files = natsorted(
+        [os.path.join(tif_folder, f)
+         for f in os.listdir(tif_folder)
+         if f.lower().endswith('.tif')]
+    )
+    if not tif_files:
+        raise FileNotFoundError("No *.tif files in folder.")
+
+    c1 = [f for f in tif_files if '_C1_' in f]
+    c2 = [f for f in tif_files if '_C2_' in f]
+
+    # save the c1 and c2 lists to the tif_folder
+    with open(os.path.join(tif_folder, 'c1_files_appended.txt'), 'w') as f:
+        f.write('\n'.join(c1))
+    with open(os.path.join(tif_folder, 'c2_files_appended.txt'), 'w') as f:
+        f.write('\n'.join(c2))
+
+    # identify the creation time of c1 and c2 files and save it to a text file
+    # this is useful to identify when the recording started
+    import time
+    if c1:
+        c1_times = [os.path.getctime(f) for f in c1]
+        c1_time_str = time.ctime(min(c1_times))
+        with open(os.path.join(tif_folder, 'c1_creation_time.txt'), 'w') as f:
+            f.write(f"C1 files creation time (earliest): {c1_time_str}\n")
+    if c2:
+        c2_times = [os.path.getctime(f) for f in c2]
+        c2_time_str = time.ctime(min(c2_times))
+        with open(os.path.join(tif_folder, 'c2_creation_time.txt'), 'w') as f:
+            f.write(f"C2 files creation time (earliest): {c2_time_str}\n")
+
+    # parallel processing for camera conversion
+    jobs = []
+    if c1:
+        out_c1 = os.path.join(
+            tif_folder,
+            os.path.basename(c1[0]).split('C1_')[0] + 'C1_stitched.avi')
+        jobs.append(('C1', c1, out_c1))
+    if c2:
+        out_c2 = os.path.join(
+            tif_folder,
+            os.path.basename(c2[0]).split('C2_')[0] + 'C2_stitched.avi')
+        jobs.append(('C2', c2, out_c2))
+
+    if not jobs:
+        raise RuntimeError("Stacks are present but neither _C1_ nor _C2_ "
+                           "pattern was found in filenames.")
+
+    # 2.  run one stitching job per camera in parallel ----------------
+    #    (uses the CPU‑only parallel writer we added earlier)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = []
+        for cam_tag, files, out_avi in jobs:
+            fut = ex.submit(
+                stitch_multipage_tifs_to_avi,
+                files, out_avi,
+                fps=fps,
+                delete_tifs=delete_tifs,
+                workers=workers,
+                pages_per_chunk=pages_per_chunk,
+                max_inflight=max_inflight,
+            )
+            futs.append((cam_tag, fut))
+
+        # optional – nice progress / error handling
+        for cam_tag, fut in futs:
+            try:
+                fut.result()                      # propagate exceptions
+            except Exception as e:
+                print(f"❌  {cam_tag} failed:", e)
+                raise
+
+import cv2, tifffile as tf, numpy as np, os, concurrent.futures, queue, threading
+from tqdm import tqdm
+
+def _load_tif(idx_path):
+    """Worker: read one multipage‑TIF and return (idx, [frames])."""
+    idx, path = idx_path
+    with tf.TiffFile(path) as tif:
+        pages = tif.pages
+        out = []
+        for pg in pages:
+            fr = pg.asarray()
+
+            # ---- dtype / channel normalisation (same rules you used) ----
+            if fr.dtype != np.uint8:
+                if fr.dtype == np.uint16:
+                    lo, hi = int(fr.min()), int(fr.max())
+                    fr = np.zeros_like(fr, dtype=np.uint8) if hi <= lo \
+                         else ((fr.astype(np.float32)-lo)*255/(hi-lo)).astype(np.uint8)
+                else:
+                    fr = cv2.normalize(fr, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            if fr.ndim == 2:                         # grey → BGR
+                fr = cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
+            elif fr.ndim == 3 and fr.shape[2] == 1:
+                fr = cv2.cvtColor(fr[..., 0], cv2.COLOR_GRAY2BGR)
+            elif fr.ndim == 3 and fr.shape[2] > 3:  # drop α or extra channels
+                fr = fr[..., :3]
+
+            out.append(fr)
+    return idx, out
+
+import os, cv2, tifffile as tf, numpy as np
+import concurrent.futures, queue, threading
+from natsort import natsorted
+from tqdm import tqdm
+
+# ------------------------------------------------------------------
+def _load_chunk(idx_path, pages_per_chunk):
+    """Process‑pool worker: read one (sub‑)chunk of a multipage TIFF."""
+    idx, path = idx_path
+    with tf.TiffFile(path) as tif:
+        pages = tif.pages
+        start = 0
+        while start < len(pages):
+            sub = pages[start:start + pages_per_chunk]
+            frames = []
+            for pg in sub:
+                fr = pg.asarray()
+
+                # ---- normalise dtype / channels --------------------
+                if fr.dtype != np.uint8:
+                    fr = ((fr.astype(np.float32) - fr.min()) *
+                          255.0 / (fr.max() - fr.min() + 1e-5)
+                          ).astype(np.uint8)
+                if fr.ndim == 2:
+                    fr = cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
+                elif fr.ndim == 3 and fr.shape[2] == 1:
+                    fr = cv2.cvtColor(fr[..., 0], cv2.COLOR_GRAY2BGR)
+                elif fr.ndim == 3 and fr.shape[2] > 3:
+                    fr = fr[..., :3]
+
+                frames.append(fr)
+            yield (idx, start // pages_per_chunk, frames)
+            start += pages_per_chunk
+
+# ------------------------------------------------------------------
+def stitch_multipage_tifs_to_avi(tif_files, output_avi, fps=16.5,
+                                 delete_tifs=False,
+                                 workers=None,
+                                 pages_per_chunk=500,
+                                 max_inflight=8):
+    """
+    CPU‑only, parallel reader / ordered writer.
+    tif_files      : list of paths, already natsorted
+    pages_per_chunk: slice large stacks so RAM stays bounded
+    max_inflight   : number of chunks allowed in RAM simultaneously
+    """
+    if not tif_files:
+        raise ValueError("No TIFF files given.")
+
+    # ── discover frame size from very first page ───────────────────
+    with tf.TiffFile(tif_files[0]) as t0:
+        probe = t0.pages[0].asarray()
+        if probe.ndim == 2:                       # grayscale
+            h, w = probe.shape
+        elif probe.ndim == 3:                     # rgb/bgr
+            h, w = probe.shape[:2]
+        else:
+            raise ValueError("Unsupported TIFF frame shape.")
+
+    # ── open CPU MJPG writer (universally readable) ────────────────
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    vw = cv2.VideoWriter(output_avi, fourcc, fps, (w, h), isColor=True)
+    if not vw.isOpened():
+        raise RuntimeError(f"Cannot open VideoWriter '{output_avi}'")
+
+    # ── queues & pool setup ────────────────────────────────────────
+    workers    = workers or max(os.cpu_count() - 1, 1)
+    futures_q  = queue.Queue(maxsize=max_inflight)
+    done_q     = queue.PriorityQueue()            # (stack, sub, frames)
+
+    def producer(executor):
+        for idx, path in enumerate(tif_files):
+            fut = executor.submit(_load_chunk, (idx, path), pages_per_chunk)
+            futures_q.put(fut)                    # back‑pressure
+        futures_q.put(None)                       # poison pill
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        threading.Thread(target=producer, args=(ex,), daemon=True).start()
+
+        next_stack, next_sub = 0, 0
+        pbar = tqdm(total=len(tif_files), desc="Writing AVI")
+
+        while True:
+            fut = futures_q.get()
+            if fut is None:
+                break
+            for stack_idx, sub_idx, frames in fut.result():
+                done_q.put((stack_idx, sub_idx, frames))
+
+            # flush ready‑in‑order chunks
+            while (not done_q.empty() and
+                   done_q.queue[0][:2] == (next_stack, next_sub)):
+                _, _, frs = done_q.get()
+                for fr in frs:
+                    vw.write(fr)
+                next_sub += 1
+                # finished one TIFF?
+                if next_sub * pages_per_chunk >= len(
+                        tf.TiffFile(tif_files[next_stack]).pages):
+                    next_stack += 1
+                    next_sub = 0
+                    pbar.update(1)
+
+        pbar.close()
+
+    vw.release()
+    if delete_tifs:
+        import gc; gc.collect()
+        for f in tif_files:
+            try: os.remove(f)
+            except OSError:
+                print(f"⚠ couldn’t delete {f}")
+    print("✅  Done:", output_avi)
+
+def check_tif_stitch(tif_folder):
+    # function to check if tif stitching results in identical data
+    tif_folder = r"G:\LAYER 6\A10-FLEX_GcaMP_CC\SD2_whisker_day1_optoRec_cam"
+    tif_files = natsorted(os.listdir(tif_folder))
+    c1_stitched = [f for f in tif_files if '_C1_' in f and 'stitched' in f]
+    c1_files = [f for f in tif_files if '_C1_' in f and 'stitched' not in f and '.tif' in f]
+
+    # load the avi file into memory
+    print("Reading AVI data from:", os.path.join(tif_folder, c1_stitched[0]))
+    avi_data = read_full_avi(os.path.join(tif_folder,c1_stitched[0]))
+
+    # load the tif files into memory
+    tif_data = []
+    for tif_file in c1_files:
+        tif_path = os.path.join(tif_folder, tif_file)
+        with tf.TiffFile(tif_path) as tif:
+            for page in tif.pages:
+                print(f"Reading page {page.index} from {tif_file}")
+                tif_data.append(page.asarray())
+    tif_data = np.array(tif_data)
+
+    # now check that the data are identical
+    if len(avi_data[0]) != len(tif_data):
+        print("AVI and TIF data have different number of frames.")
+        return False
+
+    # take the average of the avi rows and columns
+    avi_avg = np.mean(avi_data[0], axis=(0, 1))
+    tif_avg = np.mean(tif_data, axis=(0, 1))
+    diff_avi_tif = avi_avg - tif_avg
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(diff_avi_tif, label='Difference between AVI and TIF averages')
 
 # read AVI data - useful for image capture
 def lazy_avi_loader(file_path):
@@ -942,6 +1277,7 @@ def read_full_avi(file_path):
     # Release the video capture object
     cap.release()
     return frames, metadata
+
 
 '''
     animals = "L6_A03"

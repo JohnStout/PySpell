@@ -49,7 +49,42 @@ syncpaths = dict()
 
 syncpaths = [
 
-    # John Folders 
+    #{'Folder':  r"H:\Layer6\E04_M_CC_FLEX-GCAMP_L6CTChrimson",
+    # 'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\E04_M_CC_FLEX-GCAMP_L6CTChrimson")  
+    # }, 
+    #{'Folder':  r"H:\Layer6\L618_M_CC-ConFoffGCaMP_L6CTChrimson",
+    # 'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L618_M_CC-ConFoffGCaMP_L6CTChrimson")  
+    # },      
+    {'Folder':  r"H:\Layer6\L622_F_ConFoffGCaMP_L6CTChrimson",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L622_F_ConFoffGCaMP_L6CTChrimson")  
+     }, 
+    {'Folder':  r"H:\Layer6\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec")  
+     },      
+    {'Folder':  r"H:\Layer6\TA05-ConFoffGCaMP-Chrimson",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\TA05_M_RightPFC_L6Chr_CC-ConFoffGCaMP6f")  
+     },
+
+    {'Folder':  r"H:\Layer6\AB13_ConFoffGCaMP-Chrimson_L5CT",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\AB13_M_LeftPFC_L6Chr_L5CT-ConFoffGCaMP6f")  
+    },  
+    {'Folder':  r"H:\Layer6\L632-L5-FLEXgcamp-L6Chrimson",
+        'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L632_F_LeftPFC_L6Chr_L5CT-FLEXgcamp6f")
+        },
+    {'Folder': r"H:\Layer6\A10_FLEXgcamp_CC_L6Chrimson",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\A10_F_LeftPFC_L6Chr_CC-FLEXgcamp6f")
+     },
+     {'Folder': r"H:\Layer6\C37_ConFoffGCaMP_L5rec_L6Chrimson",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\C37_F_RightPFC_L6Chr_L5CT-ConFoffGCaMP6f")
+     },
+    {'Folder': r"H:\Layer6\A12_REgreenMDred_PFCrec",
+     'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\A12_F_ReGCaMP6f_MDjRGECO1a_PFCrec")
+     },
+  
+        ]
+
+"""  # John Folders 0
+
     {'Folder':  r"E:\L6 Experiments\L608",
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L608_F_LeftPFC_L6Chr_PFCgcamp6f_L6PAN")  
      },   
@@ -111,10 +146,7 @@ syncpaths = [
      },     
     {'Folder':  r"F:\John\L6 Experiments\recordings_L5CT\L6-05",
      'Dropbox': os.path.join(root,"OtherData\John\EXPERIMENTS\LAYER6\Subjects\Imaging\L605_M_RightPFC_L6Chr_PFCgcamp6f_L6L5")     
-     },
-
-  
-        ]
+     }, """
 
 # copy files from origin
 files_to_copy = ['stat.npy', 'spks.npy', 'F.npy', 
@@ -232,6 +264,7 @@ for i in syncpaths:
 
     # this should be in recurseConvert because suite2p might struggle to play
     # TODO: add suite2p code that updates the ops or stat variable to detect a changed path
+    FOV_naming_convention = False
     if FOV_naming_convention == True:
         # do an initial loop over datafolders and change the folder names as needed
         for fpath in datafolders:

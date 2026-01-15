@@ -1,19 +1,53 @@
-from setuptools import setup, Extension, find_packages
-from Cython.Build import cythonize
-import numpy as np
+from setuptools import setup, find_packages
 
 setup(
     name="pyspell",
     version="0.1.0",
-    package_dir={"": "pyspell"},
-    packages=find_packages(where="pyspell"),
-
+    description="Spellman Lab Python Toolkit for calcium imaging analysis",
+    author="John Stout - Spellman Lab",
+    license="MIT",
+    packages=find_packages(),
+    python_requires=">=3.8",
     install_requires=[
+        # Core scientific stack
         "numpy>=1.18.0",
-        "cython",
+        "scipy>=1.5.0",
+        "pandas>=1.0.0",
+        "matplotlib>=3.2.0",
+        
+        # Imaging
+        "tifffile>=2020.9.0",
+        "suite2p>=0.14",
+        
+        # Machine learning
+        "scikit-learn>=0.23.0",
+        
+        # Signal processing
+        "emd-signal",
+        "PyEMD",
+        
+        # File formats
         "xmltodict",
         "h5py",
-        "suite2p>=0.14",   # let suite2p pull in its own preferred hdmf/pynwb versions
-        "emd-signal",
+        
+        # Build tools (for oasis)
+        "cython",
+    ],
+    extras_require={
+        "dev": [
+            "pytest",
+            "black",
+            "flake8",
+        ],
+    },
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
 )

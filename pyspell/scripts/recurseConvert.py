@@ -131,7 +131,9 @@ TODO: ISSUE WITH CODE JUST RERUNNING REGISTRATION FOR SUITE2P
 
 # load modules
 import os; import matplotlib.pyplot as plt; import tifffile as tf
-#path_added = os.path.split(os.getcwd())[0]; os.chdir(path_added); print("Added path:",path_added)
+
+# TODO: This is not a safe fix
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import sys
 from datetime import datetime
@@ -184,8 +186,8 @@ else:
 
 # build classifier
 #obj=s2pfuns.classifyCells(training_sessions_directory=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p'), save_classifier=False)
-print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
-obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
+print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
+obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
 
 # ---------------------------------------------------------------------------- #
 # ---------------DEFINE FOLDERS BELOW----------------------------------------- #
@@ -193,50 +195,72 @@ obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_ro
 # recursive method
 imgpaths = dict()
 imgpaths = [
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L628_M_mdlxGCaMP_L6Chrimson"},
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L625_F_mdlxGCaMP_L6Chrimson"},
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L624_F_mdlxGCaMP_L6Chrimson"},
+    {'Folder': r"Z:\John\Subjects - GCaMP Recordings\L629_M_LeftPFC_L6REChrimson_Panrec"},    
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\A12_F_PFC-ReGCaMP6f_PFC-MDjRGECO1a_L6CTrec"},
+    #{'Folder': r"Z:\Peyton\T27",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings"}
+    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\L632-L5-FLEXgcamp-L6Chrimson"},
+    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\A10_FLEXgcamp_CC_L6Chrimson"},
+    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\C37_ConFoffGCaMP_L5rec_L6Chrimson"},
+    #{'Folder': r"H:\Layer6\A12_REgreenMDred_PFCrec"},
 
-    # Alex's folders
-    #{'Folder': r"L:\Alex\GRABers",         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True, 'rerunOASIS': False},
+    #{'Folder': r"H:\Layer6\L618_M_CC-ConFoffGCaMP_L6CTChrimson"},
+    #{'Folder': r"H:\Layer6\TA05-ConFoffGCaMP-Chrimson"},
+    #{'Folder': r"H:\Layer6\L622_F_ConFoffGCaMP_L6CTChr0imson"},
+    #{'Folder': r"H:\Layer6\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec"},
+    # {'Folder': r"H:\Layer6\E04_M_CC_FLEX-GCAMP_L6CTChrimson"},
+    
+    #{'Folder': r"H:\Layer6\E04_M_CC_FLEX-GCAMP_L6CTChrimson"},
+    #{'Folder': r"H:\Layer6\TA05-ConFoffGCaMP-Chrimson"},
+    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\AB13_ConFoffGCaMP-Chrimson_L5CT"},
+    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec"},
+    #{'Folder': r"H:\Layer6\A12_REgreenMDred_PFCrec"},
 
-    # # # peyton/alex
-     #{'Folder': r"Z:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\1",        'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\B02",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\T27",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\B03",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\48",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-     #{'Folder': r"Z:\Peyton\GFAP-hsyn",'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
+    # # # # Peyton folders
+    #{'Folder': r"Z:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    ##{'Folder': r"Z:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Peyton\1",        'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Peyton\B02",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Peyton\T27",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Peyton\B03",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Peyton\48",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
+    #  {'Folder': r"Z:\Peyton\GFAP-hsyn",'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
 
-    # John folders
-
-    {'Folder': r"E:\L6 Experiments\L608",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\L612",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\L613",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\L614",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\L616",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\L607T4",                             'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"E:\L6 Experiments\T30",                                'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"H:\Layer6\L615",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # # John folders
+    # {'Folder': r"E:\L6 Experiments\L608",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\L612",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\L613",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\L614",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\L616",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\L607T4",                             'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    # {'Folder': r"E:\L6 Experiments\T30",                                'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L615_F_RightPFC_L6Chrimson_PFCgcamp6f_Panrec", 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
     # # {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
     # # # {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
     # # # {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    #{'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+   # {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
     # # # {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    {'Folder': r"E:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
+    #{'Folder': r"H:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False,'rerunClassifier': True},    
 
-    {'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-
-    {'Folder': r"I:\2PData3 - Alex\ChAB",         'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    {'Folder': r"H:\ChC",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True}
-
-
+    #{'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    #{'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    #{'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    #{'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
+    
     # MDT folderP80
     #{'Folder': r"E:\ThalamicRec\MDT1", 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},      
 
-    #{'Folder': r"G:\2PData4",       'SpellOps': False, 'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True}
+    #Alex Folders
+    #{'Folder': r"C:\Users\spell\SpellmanLab Dropbox\timspellman\MATLAB\SpellmanLab_SharedScripts\Alex Scripts\Behavior Modeling\Test 2Ab Classifier",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': True, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Alex",       'SpellOps': False, 'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': True, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Alex 2AB RIP",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
+    #{'Folder': r"Z:\Alex\GRAB3-3",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
+    #{'Folder': r"Z:\Alex\2PData3 - Alex\ChAB\ChA2_only3'",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
+
+    #{'Folder': r"Z:\Alex\Everything GRAB",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
 
      ]
 
@@ -261,13 +285,16 @@ for i in imgpaths:
         i['behReplace'] = False
         print("Default behReplace==False for", i)
     if 'saveCleanedF' not in i:
-        i['saveCleanedF'] = True
+        i['saveCleanedF'] = False
         print("Default saveCleanedF==True for", i)        
     if 'rerunClassifier' not in i:
         i['rerunClassifier'] = False
         print("Default rerunClassifier==False for", i)    
     if 'rerunOASIS' not in i:
         i['rerunOASIS'] = False
+    if 'saveBehInFall' not in i:
+        i['saveBehInFall'] = True
+        print("Default saveBehInFall==True for", i)
 
 # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
 next = 0
@@ -462,6 +489,14 @@ while next == 0:
                         _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
                         tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
                         tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
+                        
+                        # rerun - find whether deconvolution steps were already performed
+                        dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
+                        dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
+
+                        # search for cellreg
+                        crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and '.mat' in i.lower()]
+                        
                         del ops
                     except:
                         print("Failed to run suite2p on:", subi)
@@ -720,7 +755,7 @@ while next == 0:
                         print("Failed to save out cleaned F for session:", subi)
 
                 # otherwise, if there is an existing F_clean.mat file, check for datetime inconsistencies and regen as needed
-                elif len(cFSearched)>0:
+                elif len(cFSearched)>0 and saveCleanedF==True:
 
                     # check datetime
                     # if you want to save out the cleaned F
@@ -783,7 +818,11 @@ while next == 0:
                     with open(os.path.join(subi,'recurseConvertError.txt'), 'w') as f:
                         f.write('Error in {}. Please check the code.'.format('importThorsync'))
 
-
+                # if you want to save the behavior in the fall
+                #if i['saveBehInFall'] == True:
+                    #sio.loadmat(os.path.join(subi,'beh.mat')) # load the behavior file
+                    #sio.loadmat(os.path.join())
+                    # save the behavior file in the fall
             # --------------------------------------------------------- #
             # --------------------- HOUSE KEEPING --------------------- #
 
