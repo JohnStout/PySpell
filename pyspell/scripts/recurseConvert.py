@@ -195,72 +195,7 @@ obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_ro
 # recursive method
 imgpaths = dict()
 imgpaths = [
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L628_M_mdlxGCaMP_L6Chrimson"},
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L625_F_mdlxGCaMP_L6Chrimson"},
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L624_F_mdlxGCaMP_L6Chrimson"},
-    {'Folder': r"Z:\John\Subjects - GCaMP Recordings\L629_M_LeftPFC_L6REChrimson_Panrec"},    
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\A12_F_PFC-ReGCaMP6f_PFC-MDjRGECO1a_L6CTrec"},
-    #{'Folder': r"Z:\Peyton\T27",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings"}
-    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\L632-L5-FLEXgcamp-L6Chrimson"},
-    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\A10_FLEXgcamp_CC_L6Chrimson"},
-    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\C37_ConFoffGCaMP_L5rec_L6Chrimson"},
-    #{'Folder': r"H:\Layer6\A12_REgreenMDred_PFCrec"},
-
-    #{'Folder': r"H:\Layer6\L618_M_CC-ConFoffGCaMP_L6CTChrimson"},
-    #{'Folder': r"H:\Layer6\TA05-ConFoffGCaMP-Chrimson"},
-    #{'Folder': r"H:\Layer6\L622_F_ConFoffGCaMP_L6CTChr0imson"},
-    #{'Folder': r"H:\Layer6\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec"},
-    # {'Folder': r"H:\Layer6\E04_M_CC_FLEX-GCAMP_L6CTChrimson"},
-    
-    #{'Folder': r"H:\Layer6\E04_M_CC_FLEX-GCAMP_L6CTChrimson"},
-    #{'Folder': r"H:\Layer6\TA05-ConFoffGCaMP-Chrimson"},
-    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\AB13_ConFoffGCaMP-Chrimson_L5CT"},
-    #{'Folder': r"Z:\John\L6IMGDRIVE3\Layer6\L623_M_ConFoffGCaMP_L6CTChrimson_L5CTrec"},
-    #{'Folder': r"H:\Layer6\A12_REgreenMDred_PFCrec"},
-
-    # # # # Peyton folders
-    #{'Folder': r"Z:\Peyton\L602",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    ##{'Folder': r"Z:\Peyton\L607",     'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Peyton\1",        'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Peyton\B02",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Peyton\T27",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Peyton\B03",      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Peyton\48",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True},
-    #  {'Folder': r"Z:\Peyton\GFAP-hsyn",'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-
-    # # John folders
-    # {'Folder': r"E:\L6 Experiments\L608",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L612",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L613",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L614",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L616",                               'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\L607T4",                             'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # {'Folder': r"E:\L6 Experiments\T30",                                'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    #{'Folder': r"Z:\John\Subjects - GCaMP Recordings\L615_F_RightPFC_L6Chrimson_PFCgcamp6f_Panrec", 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # # {'Folder': r"H:\Layer6\L609-pan",                                   'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},    
-    # # # {'Folder': r"H:\Layer6\L1",                                         'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    # # # {'Folder': r"H:\Layer6\L6R11",                                      'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-   # {'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    # # # {'Folder': r"H:\Layer6\L645",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': True},
-    #{'Folder': r"H:\Layer6\L615",                                       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False,'rerunClassifier': True},    
-
-    #{'Folder': r"F:\John\L6 Experiments\recordings_panneuronal\T-30",   'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    #{'Folder': r"F:\John\L6 Experiments\recordings_L5CT\L6-05",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    #{'Folder': r"H:\Layer6\L605",                                       'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    #{'Folder': r"F:\John\L6 Experiments\recordings_IT\L607-T4",         'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},
-    
-    # MDT folderP80
-    #{'Folder': r"E:\ThalamicRec\MDT1", 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'rerunClassifier': True},      
-
-    #Alex Folders
-    #{'Folder': r"C:\Users\spell\SpellmanLab Dropbox\timspellman\MATLAB\SpellmanLab_SharedScripts\Alex Scripts\Behavior Modeling\Test 2Ab Classifier",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': True, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Alex",       'SpellOps': False, 'imgReplace': False, 's2pReplace': True, 'remTif': False, 'behReplace': True, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Alex 2AB RIP",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': False, 'rerunClassifier': True},
-    #{'Folder': r"Z:\Alex\GRAB3-3",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
-    #{'Folder': r"Z:\Alex\2PData3 - Alex\ChAB\ChA2_only3'",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
-
-    #{'Folder': r"Z:\Alex\Everything GRAB",       'SpellOps': False, 'imgReplace': False, 's2pReplace': False, 'remTif': False, 'behReplace': False, 'saveCleanedF': False, 'rerunOASIS': True, 'rerunClassifier': True}
+    {'Folder': r"Z:\John\Subjects - GCaMP Recordings", 'rerunOASIS': True},
 
      ]
 
@@ -572,7 +507,7 @@ while next == 0:
                 # run denoising and constrained foopsi if:
                 # 1) dcSearched < 2: suite2p folder was found but the C and S variables missing
                 # 2) s2pFound==0: the suite2p folder was not found, was just created, and now you can add those variables
-                if len(dcSearched) < 2 or s2pFound==0:
+                if len(dcSearched) < 2 or s2pFound==0 or i['rerunOASIS'] == True:
                     logger = logger+'postProcess.cleanup_raw_traces()'
 
                     try:
@@ -580,7 +515,7 @@ while next == 0:
                         code_start = time.process_time()  
 
                         # get the C and S trace from deconvolution
-                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces() 
+                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces(n_jobs=-1, verbose=1) 
 
                         # report
                         procFOVess_end = time.process_time()
@@ -618,7 +553,7 @@ while next == 0:
                             code_start = time.process_time()  
 
                             # get the C and S trace from deconvolution
-                            s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces()  
+                            s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces(n_jobs=-1, verbose=1)  
                             
                             # run classifier
                             print("Classifying cells with SVM and cleaning the results...")

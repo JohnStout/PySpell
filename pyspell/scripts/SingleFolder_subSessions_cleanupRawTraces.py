@@ -23,19 +23,18 @@ import sessreg
 root = rf.dropbox_root(dropbox_folder='timspellman')
 from s2pfuns import cellClassifier
 
+# updated classifier on 1/23/2026 which swapped out old files with new files
+
 # define datafolder to run over
-Datafolder = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p"
-Datafolder = r"L:\Alex\GRABers\G2-NN11\D2B_IMG1_img"
+Datafolder = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\ClassifierBuildSuite2p"
+#Datafolder = r"L:\Alex\GRABers\G2-NN11\D2B_IMG1_img"
 
 # get all subdirs
 subdirs = rf.list_all_subdirs(phile_name = Datafolder)
 sessions_to_clean = [i for i in subdirs if 'plane0' in i] # filter out for suite2p
 
-
-sessions_to_clean = [r"D:\Comb-VP01-09-250409to250411\suite2p\plane0"]
-
 # loop over sessions and clean
-[s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces() for sessi in sessions_to_clean]
+[s2pfuns.postProcess(s2ppath=sessi).cleanup_raw_traces(n_jobs=-1, verbose=1) for sessi in sessions_to_clean]
 
 print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))
 obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier.pkl'))

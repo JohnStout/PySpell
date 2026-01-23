@@ -82,6 +82,297 @@ import matplotlib.pyplot as plt
 from scipy.signal import find_peaks, peak_widths
 from math import ceil
 
+import concurrent.futures
+from functools import partial
+
+# ---------------------------------------- #
+# ----- HELPER FOR PARALLEL DECONV  ------ #
+# ---------------------------------------- #
+def _process_single_cell_foopsi(cell_idx, F_row, Fneu_row, fr=7.5, correct_spk_drift=True):
+    """
+    Process a single cell with constrained foopsi deconvolution.
+    This function is at module level to enable multiprocessing.Pool.
+    
+    Uses a 3-run approach:
+        1. Baseline run to estimate number of spikes
+        2. Optimize AR decay (g) using 10% of Run 1 spikes  
+        3. Final run with refined noise and s_min threshold
+    
+    Args:
+        cell_idx: index of the cell (for tracking in parallel processing)
+        F_row: fluorescence trace for this cell (1D array)
+        Fneu_row: neuropil trace for this cell (1D array)
+        fr: frame rate in Hz (default: 7.5)
+        correct_spk_drift: if True, apply bleach/drift correction to spikes
+    
+    Returns:
+        dict with: cell_idx, c (calcium), sp (spikes), success, bl, g, sn, lam
+    """
+    import deconvolution as dc
+    
+    nTimepoints = len(F_row)
+    result = {
+        'cell_idx': cell_idx,
+        'c': np.zeros(nTimepoints),
+        'sp': np.zeros(nTimepoints),
+        'success': False,
+        'bl': 0,
+        'g': None,
+        'sn': 0,
+        'lam': 0
+    }
+    
+    try:
+        # Neuropil subtraction
+        Fc = F_row.astype(np.float64) - Fneu_row.astype(np.float64)
+        
+        # Check for valid trace
+        if np.all(Fc == 0) or np.all(np.isnan(Fc)) or np.std(Fc) == 0:
+            return result
+        
+        # Detrending: sgolay + percentile
+        f_temp, _ = sgolay_detrend(Fc, fr=fr, window_size=1001, add_median_back=True)
+        f_processed, trend = percentile_detrend(f_temp, fr=fr, window_sec=30, percentile=8, add_median_back=True)
+        
+        ar_model = 2  # AR(2) model
+        
+        # --- RUN 1: Baseline with optimize_g=0 ---
+        c1, bl1, c1_init, g1, sn1, sp1, lam1 = dc.constrained_foopsi(
+            f_processed, p=ar_model, method_deconvolution='oasis', bas_nonneg=True,
+            noise_range=[0.25, 0.5], noise_method='logmexp', sn=None,
+            lags=5, fudge_factor=1.0, solvers=None, verbosity=False, s_min=None,
+            optimize_g=0
+        )
+        num_spikes_run1 = np.sum(sp1 > 0)
+        
+        # --- RUN 2: Optimize g using 10% of detected spikes ---
+        optimized_g = max(1, int(num_spikes_run1 * 0.1))
+        c2, bl2, c2_init, g2, sn2, sp2, lam2 = dc.constrained_foopsi(
+            f_processed, p=ar_model, method_deconvolution='oasis', bas_nonneg=True,
+            noise_range=[0.25, 0.5], noise_method='logmexp', sn=None,
+            lags=5, fudge_factor=1.0, solvers=None, verbosity=False, s_min=None,
+            optimize_g=optimized_g
+        )
+        
+        # Refine noise estimate from residuals
+        c2_rescaled = c2 * (np.std(f_processed) / (np.std(c2) + 1e-10)) + np.mean(f_processed) - np.mean(c2)
+        residuals = f_processed - c2_rescaled
+        
+        # Trim outliers from residuals
+        residuals = residuals[np.abs(residuals) < 3 * np.std(residuals)]
+        if len(residuals) > 10:
+            residuals = residuals[np.abs(residuals - np.median(residuals)) < 3 * (np.median(np.abs(residuals - np.median(residuals))) / 0.6745)]
+        
+        # MAD-based noise estimate
+        if len(residuals) > 5:
+            sn_refined = np.median(np.abs(residuals - np.median(residuals))) / 0.6745
+        else:
+            sn_refined = sn2
+        
+        # --- RUN 3: Final run with refined sn and s_min threshold ---
+        spike_amplitudes = sp2[sp2 > 0]
+        if len(spike_amplitudes) > 5:
+            s_min_threshold = np.percentile(spike_amplitudes, 10)
+        else:
+            s_min_threshold = 0
+        
+        # final foopsi run on optimized g, g2, s_min_threshold, and sn_refined
+        c, bl, c_init, g, sn, sp, lam = dc.constrained_foopsi(
+            f_processed, p=ar_model, method_deconvolution='oasis', bas_nonneg=True,
+            noise_range=[0.25, 0.5], noise_method='logmexp', sn=sn_refined,
+            lags=5, fudge_factor=1.0, solvers=None, verbosity=False, s_min=s_min_threshold,
+            optimize_g=optimized_g, g=g2
+        )
+        
+        # Apply drift correction if requested
+        if correct_spk_drift:
+            sp = correct_spike_drift(sp, f_processed=f_processed, fr=fr)
+        
+        # Normalize spike train by MAD
+        resid = f_processed - c
+        mad = np.median(np.abs(resid - np.median(resid)))
+        if mad > 0:
+            sp = sp / mad
+        
+        # Store results
+        result['c'] = c
+        result['sp'] = sp
+        result['bl'] = bl
+        result['g'] = g
+        result['sn'] = sn
+        result['lam'] = lam
+        result['success'] = True
+        
+    except Exception as e:
+        # Keep defaults (zeros) on failure
+        pass
+    
+    return result
+
+# ---------------------------------------- #
+# ----- PREPROCESSING HELPER FUNCTIONS --- #
+# ---------------------------------------- #
+
+def correct_spike_drift(sp, f_processed, fr):
+    """
+    Correct spike magnitudes based on bleaching/drift in fluorescence trace.
+    Uses Tim's MATLAB method from cleanupRawTraces.m (lines 139-151):
+    Tracks 99th percentile peaks and scales spikes to maintain constant peak height.
+    
+    Args:
+        sp: spike train from deconvolution
+        f_processed: processed fluorescence trace (after detrending)
+        fr: frame rate in Hz
+    
+    Returns:
+        sp_corrected: spike train with drift correction applied
+    """
+    from scipy.ndimage import percentile_filter, gaussian_filter1d
+    
+    # Track peaks using 99th percentile (same as MATLAB)
+    window_frames = int(250 * fr / 7.5)  # ~250 frames at 7.5Hz, scale with fr
+    if window_frames % 2 == 0:
+        window_frames += 1
+    
+    pks = percentile_filter(f_processed.astype(np.float64), percentile=99, size=window_frames)
+    pks = gaussian_filter1d(pks, int(500 * fr / 7.5))  # Smooth more heavily
+    
+    med_f = np.median(f_processed)
+    med_pks = np.median(pks)
+    
+    # Compute peaks above baseline
+    pks_above_baseline = pks - med_f
+    med_pks_above = med_pks - med_f
+    
+    # Safety: avoid division issues
+    if med_pks_above <= 0 or not np.isfinite(med_pks_above):
+        med_pks_above = 1
+    pks_above_baseline = np.maximum(pks_above_baseline, 0.1 * med_pks_above)
+    
+    # Compute correction factor: ratio of median peak height to local peak height
+    # When peaks are lower than median -> factor > 1 -> amplify spikes
+    # When peaks are higher than median -> factor < 1 -> reduce spikes
+    correction_factor = med_pks_above / pks_above_baseline
+    correction_factor = np.clip(correction_factor, 0.3, 3.0)
+    
+    # Apply multiplicative correction
+    sp_corrected = sp * correction_factor
+    
+    return sp_corrected
+    
+
+def percentile_detrend(trace, fr=7.5, window_sec=60, percentile=10, add_median_back=True):
+    """
+    Running percentile baseline - tracks the lower envelope of the signal.
+    Good for slow drift where baseline "wiggles up" into activity.
+    """
+    from scipy.ndimage import percentile_filter
+    
+    window_frames = int(window_sec * fr)
+    if window_frames % 2 == 0:
+        window_frames += 1
+    
+    baseline = percentile_filter(trace, percentile=percentile, size=window_frames)
+    detrended = trace - baseline
+    
+    if add_median_back:
+        detrended = detrended + np.median(trace)
+    
+    return detrended, baseline
+
+def highpass_detrend(trace, fr=7.5, cutoff_hz=0.01, order=2, add_median_back=True):
+    """
+    High-pass Butterworth filter to remove ultra-slow drift.
+    cutoff_hz: lower = removes only very slow components
+    """
+    from scipy.signal import butter, filtfilt
+    
+    nyq = fr / 2
+    normalized_cutoff = cutoff_hz / nyq
+    normalized_cutoff = np.clip(normalized_cutoff, 0.001, 0.99)
+    
+    b, a = butter(order, normalized_cutoff, btype='high')
+    detrended = filtfilt(b, a, trace)
+    trend = trace - detrended
+    
+    if add_median_back:
+        detrended = detrended + np.median(trace)
+    
+    return detrended, trend
+
+def als_detrend(trace, lam=1e7, p=0.01, niter=10, add_median_back=True):
+    """
+    Asymmetric Least Squares baseline - finds smooth lower envelope.
+    lam: smoothness (1e5-1e9, higher=smoother)
+    p: asymmetry (0.001-0.1, lower=follows baseline more closely)
+    """
+    from scipy.sparse import spdiags, csc_matrix
+    from scipy.sparse.linalg import spsolve
+    
+    L = len(trace)
+    D = csc_matrix(np.diff(np.eye(L), 2))
+    w = np.ones(L)
+    
+    for _ in range(niter):
+        W = spdiags(w, 0, L, L)
+        Z = W + lam * D.dot(D.T)
+        baseline = spsolve(Z, w * trace)
+        w = p * (trace > baseline) + (1 - p) * (trace < baseline)
+    
+    detrended = trace - baseline
+    
+    if add_median_back:
+        detrended = detrended + np.median(trace)
+    
+    return detrended, baseline
+
+def sgolay_detrend(f, fr, window_size=None, add_median_back=True, std_range=[3, 8]):
+    """
+    Apply Savitzky-Golay detrending with event removal.
+    
+    Removes calcium transients before fitting to ensure the trend 
+    follows the true baseline, not the peaks.
+    
+    Args:
+        f: fluorescence trace
+        fr: frame rate
+        window_size: savgol filter window size (default: full trace length)
+        add_median_back: if True, add median back after detrending (default True)
+        std_range: [low, high] thresholds for outlier removal (default [3, 8])
+    
+    Returns:
+        f_detrended: detrended fluorescence trace
+        f_trend: the extracted trend (for visualization)
+    """
+    from scipy.signal import savgol_filter
+
+    # Use full trace length by default (removes only super low-frequency drift)
+    if window_size is None:
+        window_size = len(f)
+    
+    # Ensure window is odd and valid
+    if window_size % 2 == 0:
+        window_size -= 1
+    window_size = max(3, min(window_size, len(f) - 1 if len(f) % 2 == 0 else len(f)))
+
+    # Remove calcium transients before fitting trend
+    # Use simple approach: replace outliers with median (avoids interpolation artifacts)
+    f_clean = f.copy().astype(np.float64)
+    med_f = np.median(f_clean)
+    mad_f = np.median(np.abs(f_clean - med_f))
+    threshold = med_f + std_range[0] * mad_f
+    f_clean[f_clean > threshold] = med_f  # Replace peaks with median
+    f_clean[f_clean < med_f - std_range[1] * mad_f] = med_f  # Replace extreme lows with median
+    
+    # Apply savgol to event-free trace
+    f_trend = savgol_filter(f_clean, window_size, 2)
+    
+    if add_median_back:
+        f_detrended = f - f_trend + np.median(f)
+    else:
+        f_detrended = f - f_trend
+    
+    return f_detrended, f_trend
 
 # ---------------------------------------- #
 # ----  MAJOR STAND ALONE FUNCTIONS  ----- #
@@ -340,16 +631,15 @@ class postProcess():
             self.S = np.zeros(shape = F.shape)
 
     # -- method to run OASIS -- #
-    def cleanup_raw_traces(self, replace_rename: bool = False):
+    def cleanup_raw_traces(self, n_jobs: int = 1, verbose: int = 1):
         '''
-        John put this code together based on Tim's MATLAB code and provided an parallelized option 
-        thanks to copilot
+        Deconvolve fluorescence traces using constrained foopsi with OASIS.
 
-        Last edit 10/19/2024
+        Last edit 1/15/26 - Added parallel processing support
 
         Args: 
-            >>> replace_rename: preset to False, set to true if you want to wipe and replace
-            >>> suite2p_detrend: set to True, alternative approach is to use sgolay filter and subtract from F, but this 
+            >>> n_jobs: number of parallel workers (default: 1 = sequential, -1 = all CPUs)
+            >>> verbose: 0 = silent, 1 = progress, 2 = per-cell details
         
         UPDATES
         1/9/25: @TS devised a denoising method using EMD analysis and @JS implemented this with sgolay to both denoise and detrend data 
@@ -358,494 +648,127 @@ class postProcess():
                         welch's method because it auto assumes an FS=1
         
         1/10/25: @JS reorganized/cleaned code such that detrended data are processed in a separate method
+        1/15/26: Added parallel processing with n_jobs parameter
         '''
 
         import deconvolution as dc
 
-        # set empty arrays
-        C = []; S = []; f_det_all = []; f_emd_all = []
         total_cells = self.F.shape[0]
+        nTimepoints = self.F.shape[1]
+        
+        # Handle n_jobs = -1 to use all CPUs
+        if n_jobs == -1:
+            n_jobs = os.cpu_count() or 1
+        elif n_jobs < 1:
+            n_jobs = 1
 
         # run constrained foopsi
-        if self.F.shape[1] > 1001:
-            print("runParallel set to False. Iterating through suite2p ROIs...")
-
-            # loop over each cell and perform the operations
-            process_start = time.process_time()
-            for x in range(self.F.shape[0]):
-                print(f'denoising / deconvolving cell {x}')
-
-                # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
-                # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
-                f_detrended, __ = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
-
-                # TODO: For some reason, this didn't clean up my signal more
-                #q = np.quantile(f_detrended, 0.1)
-                #f_detrended = f_detrended - q
-
-                # option to instead use emd analysis to extract high frequency noise for std estimation
-                #__, sn = self.emd_denoise(f = f_detrended) # this makes more sense than uses sgolays sn
-
-                # running constrained foopsi
-                try:
-                    process_start = time.process_time()
-                    noise_range = [0.25, 0.5] # noise frequency range
-                    deconv_method = 'oasis'   # OASIS
-                    solvers = None            # for cvx, but doesn't matter here
-                    lags = 5                  # lags==5 appear the most robust which is consistent with their default 
-                    sn = None                 # let the code figure out the noise distribution
-                    c, bl, c1, g, sn, sp, lam = dc.constrained_foopsi(f_detrended, p = 2, method_deconvolution = deconv_method, bas_nonneg = True,
-                                                                noise_range = noise_range, noise_method = 'logmexp', sn=sn,
-                                                                lags = lags, fudge_factor = 1, solvers=solvers, verbosity=True)
-
-                    # normalize your spike train
-                    # This code takes the median over the median rescaled residual then normalizes this against the spike train
-                    # subtracting out the median from the residual is confusing. I dont recall why I put it there. I probably didnt like how the data looked without it.
-                    mad = np.median(np.abs( (f_detrended - c) - np.median(f_detrended - c) ))
-                    sp = sp / mad
-                    
-                    print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
-                except:
-                    print("Failed to run constrained foopsi, likely division by zero")
-                    c  = np.zeros(shape = self.F[x,:].shape)
-                    sp = np.zeros(shape = self.F[x,:].shape)
-                C.append(c)
-                S.append(sp)
+        if nTimepoints > 1001:
+            process_start = time.time()
+            progressInterval = max(1, total_cells // 10)
+            
+            # Initialize output arrays
+            C = np.zeros((total_cells, nTimepoints))
+            S = np.zeros((total_cells, nTimepoints))
+            
+            if n_jobs > 1:
+                # === PARALLEL PROCESSING ===
+                if verbose >= 1:
+                    print(f"Running parallel deconvolution with {n_jobs} workers...")
                 
-                # report on progress
-                progress = (x + 1) / total_cells * 100
-                print(f"{progress:.2f}% Completed")
-        
-            # convert to numpy
-            C = np.array(C) # denoised flourescence
-            S = np.array(S) # deconvolved spiking
+                # Prepare arguments for each cell
+                cell_args = [
+                    (x, self.F[x, :], self.Fneu[x, :])
+                    for x in range(total_cells)
+                ]
+                
+                # Process in parallel using ProcessPoolExecutor
+                results = []
+                with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
+                    # Submit all tasks
+                    future_to_idx = {
+                        executor.submit(_process_single_cell_foopsi, *args): args[0] 
+                        for args in cell_args
+                    }
+                    
+                    # Collect results with progress tracking
+                    completed = 0
+                    for future in concurrent.futures.as_completed(future_to_idx):
+                        result = future.result()
+                        results.append(result)
+                        completed += 1
+                        if verbose >= 1 and (completed % progressInterval == 0 or completed == total_cells):
+                            print(f"\rProcessed {completed}/{total_cells} cells...", end='', flush=True)
+                
+                # Unpack results
+                for result in results:
+                    x = result['cell_idx']
+                    if result['success']:
+                        C[x, :] = result['c']
+                        S[x, :] = result['sp']
+                    # Failed cells already have zeros from initialization
+                        
+            else:
+                # === SEQUENTIAL PROCESSING ===
+                if verbose >= 1:
+                    print("Processing cells sequentially...")
+                
+                for x in range(total_cells):
+                    if verbose >= 2:
+                        print(f'denoising / deconvolving cell {x}')
+                    elif verbose >= 1 and (x % progressInterval == 0 or x == total_cells - 1):
+                        print('.', end='', flush=True)
+
+                    # Use the helper function for consistency
+                    result = _process_single_cell_foopsi(x, self.F[x, :], self.Fneu[x, :])
+                    
+                    if result['success']:
+                        C[x, :] = result['c']
+                        S[x, :] = result['sp']
+                    elif verbose >= 2:
+                        print(f"  Cell {x}: failed")
 
             # store in self
             self.C = C
             self.S = S                                      
 
             # report on timing
-            print("Time to cleanup raw traces:",(time.process_time() - process_start)/60,"min")    
+            if verbose >= 1:
+                print()  # newline
+                print(f"Time to cleanup raw traces: {(time.time() - process_start)/60:.2f} min")    
 
             # save traces and return
-            print("Saving results to",self.s2ppath)
-            if replace_rename is True:
-                print("Renaming F to F_s2p and spks to spks_s2p and saving C as F and S as spks...")
-                os.rename(os.path.join(self.s2ppath,'F.npy'), os.path.join(self.s2ppath,'F_s2p.npy'))
-                os.rename(os.path.join(self.s2ppath,'spks.npy'), os.path.join(self.s2ppath,'spks_s2p.npy'))
-                np.save(os.path.join(self.s2ppath,'F.npy'), C); print("Saved denoised flourescence (C)")
-                np.save(os.path.join(self.s2ppath,'spks.npy'), S); print("Saved deconvolved spikes (S)")
+            print(f"Saving results to {self.s2ppath}")
+            np.save(os.path.join(self.s2ppath, 'C.npy'), C)
+            np.save(os.path.join(self.s2ppath, 'S.npy'), S)
+            print("Saved denoised fluorescence (C) and deconvolved spikes (S)")
+
+            # save out MATLAB variables
+            self.save_fall()
+
+    def save_fall(self):    
+        """Save Fall.mat with all suite2p + C/S variables."""
+        from datetime import datetime
+        
+        # Convert ops to matlab compatible format
+        # Skip numpy arrays and convert datetime objects to strings
+        ops_matlab = {}
+        for k, v in self.ops.items():
+            if isinstance(v, np.ndarray):
+                continue  # Skip arrays (they cause issues in nested structs)
+            elif isinstance(v, datetime):
+                # Convert datetime to string
+                ops_matlab[k] = v.strftime("%Y-%m-%d %H:%M:%S")
             else:
-                np.save(os.path.join(self.s2ppath,'C.npy'), C); print("Saved denoised flourescence (C)")
-                np.save(os.path.join(self.s2ppath,'S.npy'), S); print("Saved deconvolved spikes (S)")
-            return C, S
-
-    # -- method to run OASIS with adaptive threshold (ported from MATLAB) -- #
-    def cleanup_raw_traces_adaptive(self, fr: float = None, verbose: int = 1, 
-                                     ar_order: str = 'ar1', replace_rename: bool = False):
-        '''
-        Multi-pass adaptive deconvolution using OASIS algorithm.
+                ops_matlab[k] = v
         
-        Ported from Tim's MATLAB cleanupRawTracesTim_AdaptiveThreshold.
-        
-        Uses OASIS algorithm for fast, exact deconvolution.
-        Starts with a liberal noise estimate (low SNS) and incrementally increases
-        until a composite quality metric crosses a threshold indicating the
-        deconvolution is no longer detecting excessive noise spikes.
-
-        The composite metric is based on: A/ResidVar, |ResidAC1|, SN, Lambda
-        Threshold was calibrated from manual quality scoring (Q=5 ideal, Q>=6 noisy).
-
-        Args:
-            >>> fr: frame rate in Hz. If None, uses self.ops['fs']
-            >>> verbose: 0 = silent, 1 = summary, 2 = per-cell progress (default: 1)
-            >>> ar_order: 'ar1' (faster) or 'ar2' (more accurate for GCaMP6) (default: 'ar1')
-            >>> replace_rename: if True, renames original F/spks files and saves C/S in their place
-        
-        Returns:
-            >>> C: denoised calcium traces (neurons x timepoints)
-            >>> S: deconvolved spike estimates (neurons x timepoints)
-            >>> metrics: dict containing A, SN, SNS_final, Lambda, ResidVar, ResidAC1, compositeScore
-        
-        John Stout - Ported from Tim Spellman's MATLAB code (Jan 2026)
-        '''
-        
-        import deconvolution as dc
-        from scipy.optimize import curve_fit
-        
-        # Get frame rate
-        if fr is None:
-            fr = self.ops.get('fs', 2.85)
-        
-        # === THRESHOLD PARAMETERS ===
-        # Reference values (from Q=5 ideal cells)
-        REF_A_RV_MEAN = 1.0
-        REF_A_RV_STD = 0.5
-        REF_AC1_MEAN = 0.05
-        REF_AC1_STD = 0.03
-        REF_SN_MEAN = 0.05
-        REF_SN_STD = 0.02
-        REF_LAMBDA_MEAN = -0.05
-        REF_LAMBDA_STD = 0.03
-        
-        # Signs: +1 if higher value means more noisy, -1 if lower means more noisy
-        SIGN_A_RV = 1
-        SIGN_AC1 = 1
-        SIGN_SN = -1
-        SIGN_LAMBDA = 1
-        
-        # Composite threshold (values above this indicate too many noise spikes)
-        COMPOSITE_THRESHOLD = 2.0
-        
-        # === SNS SEARCH PARAMETERS ===
-        SNS_START = 1.5      # Starting (liberal) noise multiplier
-        SNS_INCREMENT = 0.5  # Step size
-        SNS_MAX = 6.0        # Maximum SNS to try
-        
-        # Initialize outputs
-        nNeurons = self.F.shape[0]
-        nTimepoints = self.F.shape[1]
-        
-        C = np.zeros((nNeurons, nTimepoints))
-        S = np.zeros((nNeurons, nTimepoints))
-        A = np.zeros(nNeurons)
-        SN = np.zeros(nNeurons)
-        SNS_final = np.zeros(nNeurons)
-        Lambda = np.zeros(nNeurons)
-        ResidVar = np.zeros(nNeurons)
-        ResidAC1 = np.zeros(nNeurons)
-        compositeScore = np.zeros(nNeurons)
-        
-        # Progress tracking
-        progressInterval = max(1, nNeurons // 10)
-        process_start = time.process_time()
-        
-        for x in range(nNeurons):
-            if verbose >= 2:
-                print(f'Cell {x+1}/{nNeurons}: ', end='')
-            elif verbose >= 1 and (x % progressInterval == 0 or x == nNeurons - 1):
-                print('.', end='', flush=True)
-            
-            try:
-                # === PREPROCESSING ===
-                f = self.F[x, :].astype(np.float64) - 0.7 * self.Fneu[x, :].astype(np.float64)
-                
-                if np.all(f == 0) or np.all(np.isnan(f)) or np.std(f) == 0:
-                    SNS_final[x] = np.nan
-                    compositeScore[x] = np.nan
-                    if verbose >= 2:
-                        print('SKIP')
-                    continue
-                
-                # Sgolay detrending with event removal
-                f2 = np.concatenate([f, np.median(f) * np.ones(1000)])
-                mad_f = np.median(np.abs(f - np.median(f)))
-                f2[f2 > np.median(f) + 3 * mad_f] = np.nan
-                validIdx = np.where(~np.isnan(f2))[0]
-                
-                if len(validIdx) < 10:
-                    SNS_final[x] = np.nan
-                    compositeScore[x] = np.nan
-                    if verbose >= 2:
-                        print('SKIP')
-                    continue
-                
-                f2 = np.interp(np.arange(len(f2)), validIdx, f2[validIdx])
-                
-                # Sgolay filter window
-                win = int(round(150 * fr))
-                if win % 2 == 0:
-                    win += 1
-                win = min(win, len(f2) - 1)
-                if win < 3:
-                    win = 3
-                
-                f3 = savgol_filter(f2, win, 2)
-                f3 = f3[:len(f)]
-                f = f - f3 + np.median(f)
-                
-                # Running baseline subtraction
-                win_perc = int(round(250 * fr))
-                lows = self._running_percentile(f, win_perc, 5)
-                lows = gaussian_filter1d(lows, win_perc // 4)
-                f = f - lows + np.median(f)
-                
-                # Bleaching/drift correction
-                pks = self._running_percentile(f, win_perc, 99)
-                pks = gaussian_filter1d(pks, int(round(500 * fr)) // 4)
-                
-                med_f = np.median(f)
-                med_pks = np.median(pks)
-                pks_above_baseline = pks - med_f
-                med_pks_above = med_pks - med_f
-                if med_pks_above <= 0 or not np.isfinite(med_pks_above):
-                    med_pks_above = 1
-                pks_above_baseline = np.maximum(pks_above_baseline, 0.1 * med_pks_above)
-                pksTmp = med_pks_above / pks_above_baseline
-                pksTmp = np.clip(pksTmp, 0.3, 3.0)
-                f = med_f + (f - med_f) * pksTmp
-                f[f < 0] = 0
-                
-                # Normalize
-                med_f = np.median(f)
-                if med_f == 0 or not np.isfinite(med_f):
-                    med_f = 1
-                f_norm = f / med_f
-                f_norm[~np.isfinite(f_norm)] = np.nanmedian(f_norm)
-                
-                # Base noise estimate
-                below_med = f_norm[f_norm < np.median(f_norm)]
-                if len(below_med) < 5:
-                    sn_base = np.std(f_norm)
-                else:
-                    sn_base = np.std(below_med)
-                if sn_base == 0 or not np.isfinite(sn_base):
-                    sn_base = 0.1
-                
-                # === MULTI-PASS ADAPTIVE SEARCH ===
-                sns_current = SNS_START
-                best_sns = sns_current
-                best_composite = np.inf
-                best_c = np.zeros_like(f_norm)
-                best_sp = np.zeros_like(f_norm)
-                best_a_hat = 1
-                best_sn = 0
-                best_lambda = 0
-                best_rv = 0
-                best_ac1 = 0
-                
-                # AR order for OASIS
-                p = 1 if ar_order == 'ar1' else 2
-                
-                while sns_current <= SNS_MAX:
-                    sn_est = sn_base * sns_current
-                    
-                    try:
-                        # Run OASIS deconvolution
-                        c, bl, c1, g, sn_out, sp, lam = dc.constrained_foopsi(
-                            f_norm.astype(np.float32), p=p, method_deconvolution='oasis',
-                            bas_nonneg=True, noise_range=[0.25, 0.5], noise_method='logmexp',
-                            sn=sn_est, lags=5, fudge_factor=1, solvers=None, verbosity=False
-                        )
-                        
-                        # Check for failed deconvolution
-                        if np.all(c == 0) and np.all(sp == 0):
-                            if verbose >= 2:
-                                print(f'(zero output at SNS={sns_current:.1f}) ', end='')
-                            sns_current += SNS_INCREMENT
-                            continue
-                        
-                        # Compute amplitude
-                        denom = np.dot(c, c)
-                        if denom > 0:
-                            a_hat = np.dot(c, f_norm - bl) / denom
-                        else:
-                            a_hat = 1
-                        if not np.isfinite(a_hat) or a_hat <= 0:
-                            a_hat = 1
-                        
-                        # Compute metrics
-                        resid = f_norm - bl - c
-                        rv = np.var(resid) / (sn_est ** 2)
-                        
-                        resid_centered = resid - np.mean(resid)
-                        ac_num = np.sum(resid_centered[:-1] * resid_centered[1:])
-                        ac_denom = np.sum(resid_centered ** 2)
-                        ac1 = ac_num / ac_denom if ac_denom > 1e-10 else 0
-                        
-                        # Lambda (exponential tail fit)
-                        sp_norm = sp / a_hat
-                        sp_nz = sp_norm[sp_norm > 0]
-                        lambda_val = np.nan
-                        if len(sp_nz) >= 20:
-                            q = np.percentile(sp_nz, np.linspace(0, 100, 101))
-                            qf = q[85:]
-                            if len(np.unique(qf)) >= 3:
-                                try:
-                                    def exp_func(x, a, b):
-                                        return a * np.exp(b * x)
-                                    popt, _ = curve_fit(exp_func, np.arange(len(qf)), qf, 
-                                                       p0=[qf[0], -0.1], maxfev=1000)
-                                    lambda_val = -popt[1]
-                                except:
-                                    lambda_val = np.nan
-                        
-                        # Compute composite score
-                        A_RV = a_hat / (rv + 1e-10)
-                        
-                        z_A_RV = (A_RV - REF_A_RV_MEAN) / REF_A_RV_STD
-                        z_AC1 = (np.abs(ac1) - REF_AC1_MEAN) / REF_AC1_STD
-                        z_SN = (sn_est - REF_SN_MEAN) / REF_SN_STD
-                        z_Lambda = (lambda_val - REF_LAMBDA_MEAN) / REF_LAMBDA_STD if np.isfinite(lambda_val) else 0
-                        
-                        composite = (SIGN_A_RV * z_A_RV + SIGN_AC1 * z_AC1 + 
-                                    SIGN_SN * z_SN + SIGN_LAMBDA * z_Lambda)
-                        
-                        if verbose >= 2:
-                            print(f'SNS={sns_current:.1f}: comp={composite:.2f} ', end='')
-                        
-                        # Track best result
-                        if composite < best_composite:
-                            best_composite = composite
-                            best_sns = sns_current
-                            best_c = c.copy()
-                            best_sp = sp_norm.copy()
-                            best_a_hat = a_hat
-                            best_sn = sn_est
-                            best_lambda = lambda_val
-                            best_rv = rv
-                            best_ac1 = ac1
-                        
-                        # Stop if composite exceeds threshold
-                        if composite > COMPOSITE_THRESHOLD:
-                            if verbose >= 2:
-                                print('STOP (threshold exceeded)')
-                            break
-                        
-                    except Exception as e:
-                        if verbose >= 2:
-                            print(f'(error at SNS={sns_current:.1f}: {str(e)[:30]}) ', end='')
-                    
-                    sns_current += SNS_INCREMENT
-                
-                if verbose >= 2 and sns_current > SNS_MAX:
-                    print('MAX reached')
-                
-                # Store results
-                C[x, :] = best_c
-                S[x, :] = best_sp
-                A[x] = best_a_hat
-                SN[x] = best_sn
-                SNS_final[x] = best_sns
-                Lambda[x] = best_lambda
-                ResidVar[x] = best_rv
-                ResidAC1[x] = best_ac1
-                compositeScore[x] = best_composite
-                
-            except Exception as e:
-                if verbose >= 2:
-                    print(f'ERROR: {str(e)}')
-                SNS_final[x] = np.nan
-                compositeScore[x] = np.nan
-        
-        # Summary
-        if verbose >= 1:
-            print()  # newline after dots
-            validCells = ~np.isnan(SNS_final)
-            print('=== Adaptive Threshold Summary ===')
-            print(f'Processed: {np.sum(validCells)}/{nNeurons} cells')
-            if np.sum(validCells) > 0:
-                print(f'SNS_final: median={np.median(SNS_final[validCells]):.2f}, '
-                      f'range=[{np.min(SNS_final[validCells]):.2f}, {np.max(SNS_final[validCells]):.2f}]')
-                print(f'Composite: median={np.median(compositeScore[validCells]):.2f}, '
-                      f'range=[{np.min(compositeScore[validCells]):.2f}, {np.max(compositeScore[validCells]):.2f}]')
-            print(f'Time: {(time.process_time() - process_start)/60:.2f} min')
-        
-        # Store in self
-        self.C = C
-        self.S = S
-        
-        # Pack metrics
-        metrics = {
-            'A': A,
-            'SN': SN,
-            'SNS_final': SNS_final,
-            'Lambda': Lambda,
-            'ResidVar': ResidVar,
-            'ResidAC1': ResidAC1,
-            'compositeScore': compositeScore
-        }
-        
-        # Save results
-        print(f"Saving results to {self.s2ppath}")
-        if replace_rename:
-            print("Renaming F to F_s2p and spks to spks_s2p and saving C as F and S as spks...")
-            if os.path.exists(os.path.join(self.s2ppath, 'F.npy')):
-                os.rename(os.path.join(self.s2ppath, 'F.npy'), os.path.join(self.s2ppath, 'F_s2p.npy'))
-            if os.path.exists(os.path.join(self.s2ppath, 'spks.npy')):
-                os.rename(os.path.join(self.s2ppath, 'spks.npy'), os.path.join(self.s2ppath, 'spks_s2p.npy'))
-            np.save(os.path.join(self.s2ppath, 'F.npy'), C)
-            np.save(os.path.join(self.s2ppath, 'spks.npy'), S)
-        else:
-            np.save(os.path.join(self.s2ppath, 'C_adaptive.npy'), C)
-            np.save(os.path.join(self.s2ppath, 'S_adaptive.npy'), S)
-            np.save(os.path.join(self.s2ppath, 'deconv_metrics.npy'), metrics)
-        
-        print("Saved denoised fluorescence (C) and deconvolved spikes (S)")
-        
-        return C, S, metrics
-
-    def _running_percentile(self, x: np.ndarray, window: int, percentile: float) -> np.ndarray:
-        """
-        Compute running percentile over a 1D signal.
-        
-        Args:
-            >>> x: 1D array of values
-            >>> window: window size (number of samples)
-            >>> percentile: percentile to compute (0-100)
-        
-        Returns:
-            >>> result: running percentile with same shape as x
-        """
-        from scipy.ndimage import generic_filter
-        
-        # Ensure window is odd
-        if window % 2 == 0:
-            window += 1
-        window = max(3, min(window, len(x)))
-        
-        # Use generic_filter with percentile function
-        def percentile_func(values):
-            return np.percentile(values, percentile)
-        
-        result = generic_filter(x.astype(np.float64), percentile_func, size=window, mode='nearest')
-        
-        return result
-
-    # -- methods to clean-up the F trace
-    def sgolay_detrend(self, f):
-        '''
-        method that detrends signal f, an input argument representing the users fluorescent trace
-
-        Args:
-            >>> f: a single cells fluorescent trace
-        
-        Returns:
-            >>> f_detrended: a detrended version of the input 'f' signal
-            >>> sn: standard deviation of the event free 'noise' or 'baseline' signal
-        
-        UPDATES:
-            >>> 4/22/25: added flexibility for window size. Default remains 1001
-
-        John Stout
-        '''
-
-        # identify candidate outlier events (signal)
-        mad_f = np.median(np.abs(f - np.median(f)))
-        ttimes = np.where(f > np.median(f) + 3 * mad_f)[0]
-        
-        # now replace events with nan
-        f2 = f.copy()
-        f2[ttimes] = np.nan # nan out the events
-        
-        # interpolate candidate signal events to estimate noise
-        f2 = np.interp(np.arange(len(f2)), np.arange(len(f2))[~np.isnan(f2)], f2[~np.isnan(f2)])
-        sn = np.std(f2) # std of the noise (baseline) distribution
-
-        # subtract the underlying trend (detrend) from the noise-reduced signal
-        if f2.shape[0] < 1001:
-            print("The size of your f trace is < 1000 samples, adjusting dynamically...")
-            window = int(f2.shape[1]/1)
-            if window % 2 == 0:
-                window += 1            
-            f3 - savgol_filter(f2, window, 2) # was 1001, but this is too large for small traces
-        else:
-            f3 = savgol_filter(f2, 1001, 2)
-        #@AM changed above line to 101 from 1001
-        f_detrended = f - f3
-        f_detrended = f_detrended.astype(np.float32)
-
-        return f_detrended, sn
+        # Full save of the Fall.mat file with all suite2p + C/S variables
+        sio.savemat(os.path.join(self.s2ppath, 'Fall.mat'), mdict={
+            'F': self.F, 'Fneu': self.Fneu, 'iscell': self.iscell,
+            'stat': self.stat, 'C': self.C, 'S': self.S,
+            'ops': ops_matlab, 's2pSpk': self.spks
+        })            
+        print("Saved Fall.mat")
 
     # method to denoise data, do not use before OASIS
     def emd_denoise(self, f):
@@ -975,7 +898,10 @@ class postProcess():
             f_reconstructed, sn_emd = self.emd_denoise(f = self.F[x,:] - self.Fneu[x,:])
 
             # f = neuropil corrected f signal
-            f_detrended, sn_golay = self.sgolay_detrend(f = f_reconstructed)
+            f_detrended, sn_golay = sgolay_detrend(f = f_reconstructed, window_size=1001, add_median_back=True)
+            
+            # Detrending: sgolay + percentile
+            f_detrended, trend = percentile_detrend(f_detrended, fr=fr, window_sec=30, percentile=8, add_median_back=True)
 
             # cache
             f_clean.append(f_detrended)
@@ -1064,8 +990,11 @@ class postProcess():
 
             # f_detrended = sgolay/mad method (see function and Grosmark 2021). 
             # sn=std of the 'baseline/caevent free/noise' distribution used for constrained_foopsi
-            f_detrended, sn = self.sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:])
-
+            f_detrended, sn = sgolay_detrend(f = self.F[x,:] - self.Fneu[x,:], window_size=1001, add_median_back=True)
+            
+            # Detrending: sgolay + percentile
+            f_detrended, trend = percentile_detrend(f_detrended, window_sec=30, percentile=8, add_median_back=True)
+                        
             # Range of possible lags to test
             lag_range = range(1, max_lags+1)
 
@@ -1198,16 +1127,6 @@ class cellClassifier():
         self.training_sessions = [i for i in all_dir if 'suite2p' in i and 'plane' in i]
         self.df_train = self.gather_classifier_data(self.training_sessions)
         
-        #
-        #(self.svc,
-        # self.scaler,
-        # self.selected_features,
-        # self.pca,
-        # self.n_components,
-        # self.idx_rem) = self.build_classifier(
-        #    auto_feature_select=False,
-        #    preset_features=True
-        #)
 
     def save_model(self, filepath: str):
         """Serialize this entire object to a pickle file."""
@@ -2385,8 +2304,10 @@ def calcium_events(Fc,
     # 1) Detrend fluorescence if requested
     Fc_old = Fc
     if detrend_data:
-        Fc = sgolay_detrend(Fc)
-
+        # Detrending: sgolay + percentile
+        f_temp, _ = sgolay_detrend(Fc, fr=fs, window_size=1001, add_median_back=True)
+        Fc, trend = percentile_detrend(f_temp, fr=fs, window_sec=30, percentile=8, add_median_back=True)
+                
     # use 3 mad to identify signal events
     med = np.median(Fc)
     mad = np.median(np.abs(Fc - med))
@@ -2640,6 +2561,7 @@ def snr_pnr(fpath):
     #pnr(x)=pk95(x)./std(neuron.C_raw(x,:));
 
 # -- methods to clean-up the F trace
+"""
 def sgolay_detrend(f, window=1001):
     '''
     method that detrends signal f, an input argument representing the users fluorescent trace
@@ -2684,3 +2606,4 @@ def sgolay_detrend(f, window=1001):
     f_detrended = f_detrended.astype(np.float32)
 
     return f_detrended
+"""

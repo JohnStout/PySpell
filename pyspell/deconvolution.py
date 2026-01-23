@@ -136,37 +136,57 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
                 fluor, g, sn, b=bl, c1=c1, bas_nonneg=bas_nonneg, solvers=solvers)
 
         elif method_deconvolution == 'oasis':
-            print("Running deconvolution with method OASIS")
+            if verbosity:
+                print("Running deconvolution with method OASIS")
             #from caiman.source_extraction.cnmf.oasis import constrained_oasisAR1
             penalty = 1 if s_min is None else 0
+            _s_min = 0 if s_min is None else s_min
+            
+            def _call_oasis_ar1(fluor_data, g_val, sn_val, optimize_b, b_nonneg=True, optimize_g=0):
+                """Helper to call constrained_oasisAR1 with fallback for different package versions."""
+                # Try with full arguments first (extended OASIS version)
+                try:
+                    return constrained_oasisAR1(
+                        fluor_data, g_val, sn_val, optimize_b=optimize_b, b_nonneg=b_nonneg,
+                        optimize_g=optimize_g, penalty=penalty, s_min=_s_min)
+                except TypeError as e:
+                    if 'penalty' in str(e) or 's_min' in str(e) or 'unexpected keyword' in str(e):
+                        # Fall back to basic oasis signature without penalty/s_min
+                        return constrained_oasisAR1(
+                            fluor_data, g_val, sn_val, optimize_b=optimize_b, b_nonneg=b_nonneg,
+                            optimize_g=optimize_g)
+                    else:
+                        raise
+            
             if p == 1:
-                print("Running AR1 model")
+                if verbosity:
+                    print("Running AR1 model")
                 if bl is None:
                     # Infer the most likely discretized spike train underlying an AR(1) fluorescence trace
                     # Solves the noise constrained sparse non-negative deconvolution problem
                     # min |s|_1 subject to |c-y|^2 = sn^2 T and s_t = c_t-g c_{t-1} >= 0
                     try:
-                        c, sp, bl, g, lam = constrained_oasisAR1(
+                        c, sp, bl, g, lam = _call_oasis_ar1(
                             fluor.astype(np.float32), g[0], sn, optimize_b=True, b_nonneg=bas_nonneg,
-                            optimize_g=optimize_g, penalty=penalty, s_min=0 if s_min is None else s_min)
-                    except:
-                        # JS
-                        print("Attempting 64bit precision")
-                        c, sp, bl, g, lam = constrained_oasisAR1(
+                            optimize_g=optimize_g)
+                    except Exception as e:
+                        # Try 64bit precision as fallback
+                        if verbosity:
+                            print("Attempting 64bit precision")
+                        c, sp, bl, g, lam = _call_oasis_ar1(
                             fluor.astype(np.float64), g[0], sn, optimize_b=True, b_nonneg=bas_nonneg,
-                            optimize_g=optimize_g, penalty=penalty, s_min=0 if s_min is None else s_min)
+                            optimize_g=optimize_g)
                         bit_precision = '64'                        
                 else:
                     try:
-                        c, sp, _, g, lam = constrained_oasisAR1(
-                            (fluor - bl).astype(np.float32), g[0], sn, optimize_b=False, penalty=penalty,
-                            s_min=0 if s_min is None else s_min)
-                    except:
-                        # JS
-                        print("Attempting 64bit precision")
-                        c, sp, _, g, lam = constrained_oasisAR1(
-                                    (fluor - bl).astype(np.float64), g[0], sn, optimize_b=False, penalty=penalty,
-                                    s_min=0 if s_min is None else s_min)
+                        c, sp, _, g, lam = _call_oasis_ar1(
+                            (fluor - bl).astype(np.float32), g[0], sn, optimize_b=False)
+                    except Exception as e:
+                        # Try 64bit precision as fallback
+                        if verbosity:
+                            print("Attempting 64bit precision")
+                        c, sp, _, g, lam = _call_oasis_ar1(
+                            (fluor - bl).astype(np.float64), g[0], sn, optimize_b=False)
                         bit_precision='64'
 
 

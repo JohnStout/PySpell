@@ -23,21 +23,21 @@ root = rf.dropbox_root(dropbox_folder='timspellman')
 folder = os.path.join(rf.dropbox_root(),'OtherData','John\EXPERIMENTS\LAYER6\Subjects\Imaging')
 
 # build classifier
-load_classifier = True
-if load_classifier == False:
+build_classifier = True
+if build_classifier == True:
     print('Building classifier...')
     obj = cellClassifier(training_sessions_directory=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p'))
+    obj.check_classifier_loso(auto_feature_select=False, preset_features=False, feature_list=None)
+    obj.build_classifier(preset_features=True, grid_search=True, drop_nan=True, skew_classifier=False)
+
+    # get current datetime
+    current_date = datetime.now().strftime("%m%d%Y")
+    obj.save_model(filepath=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_{}.pkl'.format(current_date)))
+    
 else:
     print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
     obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
-
-# classify data from all detected sessions
-sessions = [obj.classify(i) for i in rf.list_all_subdirs(folder) if 'suite2p' in i and 'plane0' in i] # get all the directories with suite2p in them
-
-
-
-
-
+    
 # to just process a single session
 #obj.classify(sessions[0])
 #[obj.classify(i) for i in sessions]
