@@ -112,19 +112,26 @@ UPDATES:
                 Changed default suite2p to SpellOps==False
                 Improved loop by changing behavioral if statement which is now more flexible to detect beh.mat file naming combinations
 
+    - 1/23/2026: Finalized deconvolution by improving preprocessing, including multiple Foopsi runs to optimize variables, then drift/bleach correcting the S trace
+    - 2/9/2026: Updates to thorfuns.convert
+
 REFERENCES:
     Constrained Foopsi
         * Pnevmatikakis et al. 2016. Neuron, in press, http://dx.doi.org/10.1016/j.neuron.2015.11.037
         * Machado et al. 2015. Cell 162(2):338-350
         * Code was taken from the CaImAn package: https://github.com/flatironinstitute/CaImAn
+        * Stout and Spellman enhanced the OASIS run by optimizing parameters
     Suite2p
         * Pachitariu, M., et al. (2016). bioRxiv, https://www.biorxiv.org/content/10.1101/061507v2.abstract
     Detrending steps and constrained foopsi on our data:
         * Friedrich, J., Zhou, P., & Paninski, L. (2017). Fast online deconvolution of calcium imaging data. PLoS computational biology, 13(3), e1005423.
         * Grosmark et al. (2021). Nature Neuroscience, 24(11), 1574-1585.
         * Spellman et al., (2021). Cell, 184(10), 2750-2766.
+        * Stout and Spellman improved preprocessing and detrending steps
     EMD analysis for denoising
         * Tim Spellman
+    CellRegPy
+        * Stout and Spellman improved CellReg processing and converted to cellregpy
 
 TODO: ISSUE WITH CODE JUST RERUNNING REGISTRATION FOR SUITE2P
 """
@@ -155,401 +162,401 @@ import thorfuns
 import sessreg
 root = rf.dropbox_root(dropbox_folder='timspellman')
 
-# ------------------------------------------ #
-# -------PARAMETER SPACE-------------------- #
+# Running __name__=='__main__' is required for Windows multiprocessing to prevent recursion
+if __name__ == '__main__':
 
-# whether or not to run iteratively or recursively
-run_opts = ['forever', 'iterate']
-run_method = 1 # change as needed. Set to 0 if forever loop
+    # whether or not to run iteratively or recursively
+    run_opts = ['forever', 'iterate']
+    run_method = 1 # change as needed. Set to 0 if forever loop
 
-# suite2p rerun date
-s2p_update = 'January 10, 2025, 20:00:00' # If you set this to None, then it will ignore a date
-s2p_update_datetime = datetime.strptime(s2p_update, '%B %d, %Y, %H:%M:%S')
+    # suite2p rerun date
+    s2p_update = 'January 10, 2025, 20:00:00' # If you set this to None, then it will ignore a date
+    s2p_update_datetime = datetime.strptime(s2p_update, '%B %d, %Y, %H:%M:%S')
 
-# cleanupRawTraces update
-clean_traces_update = 'January 10, 2025, 20:00:00'
-clean_traces_datetime = datetime.strptime(clean_traces_update, '%B %d, %Y, %H:%M:%S')
+    # cleanupRawTraces update
+    clean_traces_update = 'January 26, 2026, 14:45:00'
+    clean_traces_datetime = datetime.strptime(clean_traces_update, '%B %d, %Y, %H:%M:%S')
 
-# TODO: behavior file update - will be implemented soon
-behfile_update = 'May 6, 2025, 10:00:00'
+    # TODO: behavior file update - will be implemented soon
+    behfile_update = 'May 6, 2025, 10:00:00'
 
-# run parallel processing
-run_parallel = False
+    if run_opts[run_method]=='iterate':
+        print("Iterating through available folders. Code will not iterate forever!")
+    else:
+        print("Forever loop starting in 3...2.....1.......3")
 
-if run_opts[run_method]=='iterate':
-    print("Iterating through available folders. Code will not iterate forever!")
-else:
-    print("Forever loop starting in 3...2.....1.......3")
+    # ------------------------------------------ #
+    # --------- Build Classifier  -------------- #
 
-# ------------------------------------------ #
-# --------- Build Classifier  -------------- #
+    # build classifier
+    #obj=s2pfuns.classifyCells(training_sessions_directory=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p'), save_classifier=False)
+    print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_01232026.pkl'))
+    obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_01232026.pkl'))
 
-# build classifier
-#obj=s2pfuns.classifyCells(training_sessions_directory=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p'), save_classifier=False)
-print("Loading classifier from file:", os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
-obj = cellClassifier(load_classifier=True, model_path=os.path.join(rf.dropbox_root(),'OtherData','ClassifierBuildSuite2p','cellClassifier_06112025.pkl'))
+    # ---------------------------------------------------------------------------- #
+    # ---------------DEFINE FOLDERS BELOW----------------------------------------- #
 
-# ---------------------------------------------------------------------------- #
-# ---------------DEFINE FOLDERS BELOW----------------------------------------- #
+    # recursive method
+    imgpaths = dict()
+    imgpaths = [
+        {'Folder': r"Z:\John\Subjects - GCaMP Recordings", 'rerunOASIS': False, 'saveBehInFall':False},
+        {'Folder': r"Z:\Alex", 'rerunOASIS': False, 'saveBehInFall':False},
+        {'Folder': r"Z:\Peyton", 'rerunOASIS': False, 'saveBehInFall':False},
+        ]
 
-# recursive method
-imgpaths = dict()
-imgpaths = [
-    {'Folder': r"Z:\John\Subjects - GCaMP Recordings", 'rerunOASIS': True},
+    # ---------------DEFINE FOLDERS ABOVE----------------------------------------- #
+    # ---------------------------------------------------------------------------- #
 
-     ]
-
-# ---------------DEFINE FOLDERS ABOVE----------------------------------------- #
-# ---------------------------------------------------------------------------- #
-
-# set defaults
-for i in imgpaths:
-    if 'SpellOps' not in i:
-        i['SpellOps'] = False
-        print("Default SpellOps==False for", i)
-    if 'imgReplace' not in i:
-        i['imgReplace'] = False
-        print("Default imgReplace==False for", i)
-    if 's2pReplace' not in i:
-        i['s2pReplace'] = False
-        print("Default s2pReplace==False for", i)
-    if 'remTif' not in i:
-        i['remTif'] = False
-        print("Default remTif==False for", i)
-    if 'behReplace' not in i:
-        i['behReplace'] = False
-        print("Default behReplace==False for", i)
-    if 'saveCleanedF' not in i:
-        i['saveCleanedF'] = False
-        print("Default saveCleanedF==True for", i)        
-    if 'rerunClassifier' not in i:
-        i['rerunClassifier'] = False
-        print("Default rerunClassifier==False for", i)    
-    if 'rerunOASIS' not in i:
-        i['rerunOASIS'] = False
-    if 'saveBehInFall' not in i:
-        i['saveBehInFall'] = True
-        print("Default saveBehInFall==True for", i)
-
-# don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
-next = 0
-while next == 0:
+    # set defaults
     for i in imgpaths:
-        print("Searching for .Raw files in ",i['Folder'])
-        #print("Please note that this loop will only end if you cancel the code")
+        if 'SpellOps' not in i:
+            i['SpellOps'] = False
+            print("Default SpellOps==False for", i)
+        if 'imgReplace' not in i:
+            i['imgReplace'] = False
+            print("Default imgReplace==False for", i)
+        if 's2pReplace' not in i:
+            i['s2pReplace'] = False
+            print("Default s2pReplace==False for", i)
+        if 'remTif' not in i:
+            i['remTif'] = False
+            print("Default remTif==False for", i)
+        if 'behReplace' not in i:
+            i['behReplace'] = False
+            print("Default behReplace==False for", i)
+        if 'saveCleanedF' not in i:
+            i['saveCleanedF'] = False
+            print("Default saveCleanedF==True for", i)        
+        if 'rerunClassifier' not in i:
+            i['rerunClassifier'] = False
+            print("Default rerunClassifier==False for", i)    
+        if 'rerunOASIS' not in i:
+            i['rerunOASIS'] = False
+        if 'saveBehInFall' not in i:
+            i['saveBehInFall'] = True
+            print("Default saveBehInFall==True for", i)
 
-        # identify if the user wants to use the preset spell ops file
-        if i['SpellOps'] == True:
-            print("Using Spellman params")
+    # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing
+    next = 0
+    while next == 0:
+        for i in imgpaths:
+            print("Searching for .Raw files in ",i['Folder'])
+            #print("Please note that this loop will only end if you cancel the code")
 
-            # ops path
-            ops_path = os.path.join(root,'timspellman','Python','suite2p_ops')
+            # identify if the user wants to use the preset spell ops file
+            if i['SpellOps'] == True:
+                print("Using Spellman params")
 
-            # load ops data
-            alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
-            alt_ops['tau'] = 0.7 # for gcamp 6f
-            alt_ops['fs'] = 7.5
+                # ops path
+                ops_path = os.path.join(root,'timspellman','Python','suite2p_ops')
 
-        else:
-            print("Using default s2p params")
-            alt_ops = None     
+                # load ops data
+                alt_ops = np.load(os.path.join(ops_path,'spellman_ops.npy'), allow_pickle=True).item()
+                alt_ops['tau'] = 0.7 # for gcamp 6f
+                alt_ops['fs'] = 7.5
 
-        # how to handle existing imgs and s2p folders
-        img_replace        = i['imgReplace']
-        s2p_replace        = i['s2pReplace']    
-        rem_tif            = i['remTif']
-        behReplace         = i['behReplace']
-        saveCleanedF       = i['saveCleanedF']
-        rerunClassifier    = i['rerunClassifier']
-        rerunOASIS         = i['rerunOASIS']
+            else:
+                print("Using default s2p params")
+                alt_ops = None     
 
-        if img_replace == True:
-            print("img_replace==True, wiping and replacing img.tif")
-        else:
-            print("img_replace==False, will NOT wipe and replace existing img.tif")
-        if s2p_replace == True:
-            print("s2p_replace==True, wiping and replacing suite2p folder")
-        else:
-            print("s2p_replace==False, will NOT wipe and replace suite2p folder")
-        
-        # get all subdirs
-        subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
+            # how to handle existing imgs and s2p folders
+            img_replace        = i['imgReplace']
+            s2p_replace        = i['s2pReplace']    
+            rem_tif            = i['remTif']
+            behReplace         = i['behReplace']
+            saveCleanedF       = i['saveCleanedF']
+            rerunClassifier    = i['rerunClassifier']
+            rerunOASIS         = i['rerunOASIS']
 
-        # for troubleshooting
-        #if next == 1:
-            #break
+            if img_replace == True:
+                print("img_replace==True, wiping and replacing img.tif")
+            else:
+                print("img_replace==False, will NOT wipe and replace existing img.tif")
+            if s2p_replace == True:
+                print("s2p_replace==True, wiping and replacing suite2p folder")
+            else:
+                print("s2p_replace==False, will NOT wipe and replace suite2p folder")
+            
+            # get all subdirs
+            subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
 
-        # loop over subdirectories
-        failed_subi = []; success_subi = []
-        for subi in subdirs:
-
-            # get subcontents
-            try:
-                dir_contents = os.listdir(subi)
-                logger = ''
-
-                # check if there is an existing recurseConvertError.csv file and if so, it is old and should be erased
-                # future can make this flexible by using the for loop to identify the file name
-                recurse_log_found = len([k for k in dir_contents if 'recurseConvertError' in k])
-                if recurse_log_found > 0:
-                    print("Deleting old recurseConvertError.txt file",os.path.join(subi,'recurseConvertError.txt'))
-                    os.remove(os.path.join(subi,'recurseConvertError.txt'))
-
-            except:
-                print("Skipping",subi)
-                continue
-
-            # search for .raw file
-            rawSearch = [k for k in dir_contents if '.raw' in k and 'Image' in k]
-
-            # search for behavior
-            behSearch = [k for k in dir_contents if '.h5' in k and 'Episode' in k]
+            # skip patterns
+            skip_patterns = ['\\suite2p','__pycache__', '.git', 'archive', 'backup', 'Excluded','jpeg','camera','1_CellReg']        
+            subdirs = [s for s in subdirs if not any(p.lower() in s.lower() for p in skip_patterns)]
 
             # for troubleshooting
-            #if len(rawSearch) > 0:ChC
-                #next = 1
+            #if next == 1:
                 #break
 
-            # check if folder is busy
-            print('Searching for busy folders...')
-            busyBee = rf.is_folder_busy(subi)
+            # loop over subdirectories
+            failed_subi = []; success_subi = []
+            for subi in subdirs:
 
-            # if the .Raw file was discovered, then executive img.tif and suite2p conversion
-            if len(rawSearch) > 0 and busyBee is False:
+                # get subcontents
+                try:
+                    dir_contents = os.listdir(subi)
+                    logger = ''
 
-                # search for key files
-                imgFound = []; s2pFound = []
-                imgFound = len([j for j in dir_contents if 'img.tif' in j])
-                s2pFound = len([j for j in dir_contents if 'suite2p' in j])
+                    # check if there is an existing recurseConvertError.csv file and if so, it is old and should be erased
+                    # future can make this flexible by using the for loop to identify the file name
+                    recurse_log_found = len([k for k in dir_contents if 'recurseConvertError' in k])
+                    if recurse_log_found > 0:
+                        print("Deleting old recurseConvertError.txt file",os.path.join(subi,'recurseConvertError.txt'))
+                        os.remove(os.path.join(subi,'recurseConvertError.txt'))
 
-                # check your session title for 'opto'
-                if 'opto' in os.path.split(subi)[-1].lower():
-                    led_artifact='y'
-                else:
-                    led_artifact='n'
+                except:
+                    print("Skipping",subi)
+                    continue
 
-                # search for suite2p and deconvolved data
-                dcSearch = []; dcFound = []; dcSearched = []; crSearched = []
-                if s2pFound > 0:
+                # search for .raw file
+                rawSearch = [k for k in dir_contents if '.raw' in k and 'Image' in k]
 
-                    # Use creation time for suite2p because variables get removed
-                    stat_search = [i for i in os.listdir(os.path.join(subi, 'suite2p', 'plane0')) if 'stat' in i]
-                    if len(stat_search) > 0:
-                        creation_time_suite2p = os.path.getctime(os.path.join(subi,'suite2p','plane0','stat.npy'))
-                        creation_date_suite2p = datetime.fromtimestamp(creation_time_suite2p).strftime('%B %d, %Y, %H:%M:%S')
-                        datetime_suite2p      = datetime.strptime(creation_date_suite2p, '%B %d, %Y, %H:%M:%S') 
+                # search for behavior
+                behSearch = [k for k in dir_contents if '.h5' in k and 'Episode' in k]
+
+                # for troubleshooting
+                #if len(rawSearch) > 0:ChC
+                    #next = 1
+                    #break
+
+                # check if folder is busy
+                print('Searching for busy folders...')
+                busyBee = rf.is_folder_busy(subi)
+
+                # if the .Raw file was discovered, then executive img.tif and suite2p conversion
+                if len(rawSearch) > 0 and busyBee is False:
+
+                    # search for key files
+                    imgFound = []; s2pFound = []
+                    imgFound = len([j for j in dir_contents if 'img.tif' in j])
+                    s2pFound = len([j for j in dir_contents if 'suite2p' in j])
+
+                    # check your session title for 'opto'
+                    if 'opto' in os.path.split(subi)[-1].lower():
+                        led_artifact='y'
                     else:
-                        print("No stat file found, rerunning suite2p...")
-                        datetime_suite2p = False
-                        s2pFound = 0
+                        led_artifact='n'
 
-                    # check the registered data.bin file
-                    bin_search = [i for i in os.listdir(os.path.join(subi, 'suite2p', 'plane0')) if 'data.bin' in i]
-                    if len(bin_search) > 0:
-                        creation_time_binary = os.path.getctime(os.path.join(subi,'suite2p','plane0','data.bin'))
-                        creation_date_binary = datetime.fromtimestamp(creation_time_binary).strftime('%B %d, %Y, %H:%M:%S')
-                        datetime_binary      = datetime.strptime(creation_date_binary, '%B %d, %Y, %H:%M:%S') 
-                    else:
-                        print("No binary file detected. Running suite2p...")
-                        datetime_binary = False
-                        s2pFound = 0
+                    # search for suite2p and deconvolved data
+                    dcSearch = []; dcFound = []; dcSearched = []; crSearched = []
+                    if s2pFound > 0:
 
-                    # find whether deconvolution steps were already performed
-                    dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
-                    dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
+                        # Use creation time for suite2p because variables get removed
+                        stat_search = [i for i in os.listdir(os.path.join(subi, 'suite2p', 'plane0')) if 'stat' in i]
+                        if len(stat_search) > 0:
+                            creation_time_suite2p = os.path.getctime(os.path.join(subi,'suite2p','plane0','stat.npy'))
+                            creation_date_suite2p = datetime.fromtimestamp(creation_time_suite2p).strftime('%B %d, %Y, %H:%M:%S')
+                            datetime_suite2p      = datetime.strptime(creation_date_suite2p, '%B %d, %Y, %H:%M:%S') 
+                        else:
+                            print("No stat file found, rerunning suite2p...")
+                            datetime_suite2p = False
+                            s2pFound = 0
 
-                    # search for cellreg
-                    crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and '.mat' in i.lower()]
+                        # check the registered data.bin file
+                        bin_search = [i for i in os.listdir(os.path.join(subi, 'suite2p', 'plane0')) if 'data.bin' in i]
+                        if len(bin_search) > 0:
+                            creation_time_binary = os.path.getctime(os.path.join(subi,'suite2p','plane0','data.bin'))
+                            creation_date_binary = datetime.fromtimestamp(creation_time_binary).strftime('%B %d, %Y, %H:%M:%S')
+                            datetime_binary      = datetime.strptime(creation_date_binary, '%B %d, %Y, %H:%M:%S') 
+                        else:
+                            print("No binary file detected. Running suite2p...")
+                            datetime_binary = False
+                            s2pFound = 0
 
-                if imgFound > 0:
-
-                    # log datetime information
-                    creation_time_img = os.path.getmtime(os.path.join(subi,'img.tif'))
-                    creation_date_img = datetime.fromtimestamp(creation_time_img).strftime('%B %d, %Y, %H:%M:%S')
-                    datetime_img      = datetime.strptime(creation_date_img,     '%B %d, %Y, %H:%M:%S')    
-
-                # if the img.tif file was NOT found or if you want to REPLACE
-            # --------------------------------------------------------- #
-            # -------------------- CONVERT IMG DATA ------------------- #
-
-                if imgFound == 0 or img_replace == True:
-                    # for troubleshooting
-                    #if len(rawSearch) > 0:
-                        #next = 1
-                        #break                    
-                    print("No img.tif file discovered. Writing file to:", subi)
-                    logger = logger+'RawToTif'
-                    
-                    # track timing
-                    code_start = time.process_time()
-                    try:
-                        # run conversion
-                        thorfuns.RawToTif(filepath=subi).convert(method='max_proj', # don't change this for now
-                                                            chunker=1000, # impacts the number of samples used for parallel computing
-                                                            led_artifacts=led_artifact,
-                                                            wipe_and_replace=img_replace,
-                                                            run_parallel=run_parallel)
-                        
-                        # update the subdirs folder
-                        subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
-
-                        # report timing
-                        process_end = time.process_time()
-                        print(f"Total time in RawToTif: {(process_end - code_start)/60:.2f} minutes")
-                    except:
-                        print("Failed to convert raw to img.tif:", subi)
-
-                # ------------------------------------------------------------- #
-                # -------------------- RUNNING SUITE2P ------------------------ #
-
-                # if suite2p folder was NOT found, or if you want to REPLACE, or if img.tif file was modified after the binary registered suite2p data.bin file...
-                if s2pFound == 0 or s2p_replace == True:
-                    logger = logger+'+fast_suite2p'
-                    try:
-                        # track timing
-                        code_start = time.process_time()   
-
-                        # if no file is found, run suite2p
-                        print("Running suite2p and saving to:", subi)
-
-                        # run conversion   
-                        s2pfuns.fast_suite2p(imgpath=os.path.join(subi,'img.tif'), 
-                                            savepath='', 
-                                            gcamp='6f', 
-                                            alt_ops=alt_ops,
-                                            wipe_and_replace=s2p_replace)
-
-                        # save out summary images
-                        print("Writing summary images to:", subi)
-                        _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
-                        tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
-                        tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
-                        
-                        # rerun - find whether deconvolution steps were already performed
+                        # find whether deconvolution steps were already performed
                         dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
                         dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
 
                         # search for cellreg
                         crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and '.mat' in i.lower()]
+
+                    if imgFound > 0:
+
+                        # log datetime information
+                        creation_time_img = os.path.getmtime(os.path.join(subi,'img.tif'))
+                        creation_date_img = datetime.fromtimestamp(creation_time_img).strftime('%B %d, %Y, %H:%M:%S')
+                        datetime_img      = datetime.strptime(creation_date_img,     '%B %d, %Y, %H:%M:%S')    
+
+                    # if the img.tif file was NOT found or if you want to REPLACE
+                # --------------------------------------------------------- #
+                # -------------------- CONVERT IMG DATA ------------------- #
+
+                    if imgFound == 0 or img_replace == True:
+                        # for troubleshooting
+                        #if len(rawSearch) > 0:
+                            #next = 1
+                            #break                    
+                        print("No img.tif file discovered. Writing file to:", subi)
+                        logger = logger+'RawToTif'
                         
-                        del ops
-                    except:
-                        print("Failed to run suite2p on:", subi)
-
-                    # report                       
-                    process_end = time.process_time() # report
-                    print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
-
-                # search for an update to the img.tif file or a forced update to suite2p
-                elif s2pFound==1:
-
-                    # start tracker
-                    code_start = time.process_time() 
-
-                    # if datetimes are out of order, run suite2p  
-                    if datetime_suite2p < s2p_update_datetime:
-                        print("Suite2p Update detected. Rerunning and saving to:", subi)
-                    
-                    if datetime_suite2p < datetime_img or datetime_binary < datetime_img:
-                        print("Update to img.tif file detected. Deleting old suite2p file and rerunning.")
-                        s2p_replace = True
-
-                    if datetime_suite2p < s2p_update_datetime or datetime_suite2p < datetime_img or len(stat_search) == 0 or datetime_binary < datetime_img:
-                        logger = logger+'fast_suite2p'
-
+                        # track timing
+                        code_start = time.process_time()
                         try:
+                            # run conversion
+                            thorfuns.RawToTif(filepath=subi).convert(method='max_proj', # don't change this for now
+                                                                chunker=1000, # impacts the number of samples used for parallel computing
+                                                                led_artifacts=led_artifact,
+                                                                wipe_and_replace=img_replace)
+                            
+                            # update the subdirs folder
+                            subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
+
+                            # report timing
+                            process_end = time.process_time()
+                            print(f"Total time in RawToTif: {(process_end - code_start)/60:.2f} minutes")
+                        except:
+                            print("Failed to convert raw to img.tif:", subi)
+
+                    # ------------------------------------------------------------- #
+                    # -------------------- RUNNING SUITE2P ------------------------ #
+
+                    # if suite2p folder was NOT found, or if you want to REPLACE, or if img.tif file was modified after the binary registered suite2p data.bin file...
+                    if s2pFound == 0 or s2p_replace == True:
+                        logger = logger+'+fast_suite2p'
+                        try:
+                            # track timing
+                            code_start = time.process_time()   
+
+                            # if no file is found, run suite2p
+                            print("Running suite2p and saving to:", subi)
+
                             # run conversion   
                             s2pfuns.fast_suite2p(imgpath=os.path.join(subi,'img.tif'), 
                                                 savepath='', 
                                                 gcamp='6f', 
                                                 alt_ops=alt_ops,
                                                 wipe_and_replace=s2p_replace)
-                            
-                            # reset for sanity
-                            s2p_replace = i['s2pReplace']
-
-                            # recapture timing data
-                            creation_time_suite2p = os.path.getctime(os.path.join(subi,'suite2p','plane0','stat.npy'))
-                            creation_date_suite2p = datetime.fromtimestamp(creation_time_suite2p).strftime('%B %d, %Y, %H:%M:%S')
-                                    
-                            # update the subdirs folder
-                            subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
-                            process_end = time.process_time() # report
-                            print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
-
-                            # find whether deconvolution steps were already performed
-                            dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
-                            dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
-
-                            # search for cellreg
-                            crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and 'mat' in i]
 
                             # save out summary images
                             print("Writing summary images to:", subi)
                             _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
                             tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
                             tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
-                            del ops    
+                            
+                            # rerun - find whether deconvolution steps were already performed
+                            dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
+                            dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
+
+                            # search for cellreg
+                            crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and '.mat' in i.lower()]
+                            
+                            del ops
                         except:
                             print("Failed to run suite2p on:", subi)
 
-                    # search for summary images and save out
-                    if len([k for k in dir_contents if 'meanImg.tif' in k]) == 0 or len([k for k in dir_contents if 'maxProj.tif' in k]) == 0:
-                        print("Writing summary images to:", subi)
-                        _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
-                        tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
-                        tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
-                        del ops
+                        # report                       
+                        process_end = time.process_time() # report
+                        print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
 
-                # --------------------------------------------------------- #
-                # -------------------- POST PROCESSING -------------------- #
+                    # search for an update to the img.tif file or a forced update to suite2p
+                    elif s2pFound==1:
 
-                # run denoising and constrained foopsi if:
-                # 1) dcSearched < 2: suite2p folder was found but the C and S variables missing
-                # 2) s2pFound==0: the suite2p folder was not found, was just created, and now you can add those variables
-                if len(dcSearched) < 2 or s2pFound==0 or i['rerunOASIS'] == True:
-                    logger = logger+'postProcess.cleanup_raw_traces()'
+                        # start tracker
+                        code_start = time.process_time() 
 
-                    try:
-                        print("Postprocessing session:", subi)                        
-                        code_start = time.process_time()  
+                        # if datetimes are out of order, run suite2p  
+                        if datetime_suite2p < s2p_update_datetime:
+                            print("Suite2p Update detected. Rerunning and saving to:", subi)
+                        
+                        if datetime_suite2p < datetime_img or datetime_binary < datetime_img:
+                            print("Update to img.tif file detected. Deleting old suite2p file and rerunning.")
+                            s2p_replace = True
 
-                        # get the C and S trace from deconvolution
-                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces(n_jobs=-1, verbose=1) 
+                        if datetime_suite2p < s2p_update_datetime or datetime_suite2p < datetime_img or len(stat_search) == 0 or datetime_binary < datetime_img:
+                            logger = logger+'fast_suite2p'
 
-                        # report
-                        procFOVess_end = time.process_time()
-                        print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
-                    except:
-                        print("Failed to postprocess session:", subi)
-                    
-                    # classify
-                    logger = logger+'+classifier'                    
-                    try:    
-                        # now classify
-                        print("Classifying cells with SVM and cleaning the results...")
-                        obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
-                    except:
-                        print("Failed to classify session:", subi)
+                            try:
+                                # run conversion   
+                                s2pfuns.fast_suite2p(imgpath=os.path.join(subi,'img.tif'), 
+                                                    savepath='', 
+                                                    gcamp='6f', 
+                                                    alt_ops=alt_ops,
+                                                    wipe_and_replace=s2p_replace)
+                                
+                                # reset for sanity
+                                s2p_replace = i['s2pReplace']
 
-                # replacement traces are requested, s2p folder present and the C/S files also present
-                elif len(dcSearched) >= 2:
+                                # recapture timing data
+                                creation_time_suite2p = os.path.getctime(os.path.join(subi,'suite2p','plane0','stat.npy'))
+                                creation_date_suite2p = datetime.fromtimestamp(creation_time_suite2p).strftime('%B %d, %Y, %H:%M:%S')
+                                        
+                                # update the subdirs folder
+                                subdirs = rf.list_all_subdirs(phile_name = i['Folder'])
+                                process_end = time.process_time() # report
+                                print(f"Total time in suite2p: {(process_end - code_start)/60:.2f} minutes")
 
-                    # grab modification data
-                    creation_time_traces = os.path.getmtime(os.path.join(subi,'suite2p','plane0','C.npy'))
-                    creation_date_traces = datetime.fromtimestamp(creation_time_traces).strftime('%B %d, %Y, %H:%M:%S')
-                    datetime_traces      = datetime.strptime(creation_date_traces, '%B %d, %Y, %H:%M:%S')
+                                # find whether deconvolution steps were already performed
+                                dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
+                                dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
 
-                    # rerun if suite2p has been updated OR if cleanupRawTraces has been updated.
-                    # in otherwords, if you've changed the suite2p parameter space or method for cleaning raw traces, then
-                    # you should rerun this.
-                    if datetime_traces < s2p_update_datetime or datetime_traces < clean_traces_datetime or datetime_traces < datetime_suite2p or i['rerunOASIS']==True:
-                        print("Update to suite2p or cleanupRawTraces detected. Forced update to C and S.npy variables...")
-                        print("Postprocessing session:", subi)   
-                        logger = logger+'+postProcess.cleanup_raw_traces()'
+                                # search for cellreg
+                                crSearched  = [i for i in dcSearch if 'CellReg'.lower() in i.lower() and 'mat' in i]
 
-                        # log      
-                        try:               
+                                # save out summary images
+                                print("Writing summary images to:", subi)
+                                _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
+                                tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
+                                tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
+                                del ops    
+                            except:
+                                print("Failed to run suite2p on:", subi)
+
+                        # search for summary images and save out
+                        if len([k for k in dir_contents if 'meanImg.tif' in k]) == 0 or len([k for k in dir_contents if 'maxProj.tif' in k]) == 0:
+                            print("Writing summary images to:", subi)
+                            _, _, _, _, ops, _, _ =  s2pfuns.read_s2p(fpath=subi)
+                            tf.imwrite(os.path.join(subi,'meanImg.tif'), ops['meanImg'], bigtiff=True)
+                            tf.imwrite(os.path.join(subi,'maxProj.tif'), ops['max_proj'], bigtiff=True)
+                            del ops
+
+                    # --------------------------------------------------------- #
+                    # -------------------- POST PROCESSING -------------------- #
+
+                    # run denoising and constrained foopsi if:
+                    # 1) dcSearched < 2: suite2p folder was found but the C and S variables missing
+                    # 2) s2pFound==0: the suite2p folder was not found, was just created, and now you can add those variables
+                    if len(dcSearched) < 2 or s2pFound==0 or i['rerunOASIS'] == True:
+                        logger = logger+'postProcess.cleanup_raw_traces()'
+
+                        try:
+                            print("Postprocessing session:", subi)                        
+                            code_start = time.process_time()  
+
+                            # get the C and S trace from deconvolution
+                            s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).cleanup_raw_traces(n_jobs=-1, verbose=1) 
+
+                            # report
+                            procFOVess_end = time.process_time()
+                            print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
+                        except:
+                            print("Failed to postprocess session:", subi)
+                        
+                        # classify
+                        logger = logger+'+classifier'                    
+                        try:    
+                            # now classify
+                            print("Classifying cells with SVM and cleaning the results...")
+                            obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
+                        except:
+                            print("Failed to classify session:", subi)
+
+                    # replacement traces are requested, s2p folder present and the C/S files also present
+                    elif len(dcSearched) >= 2:
+
+                        # grab modification data
+                        creation_time_traces = os.path.getmtime(os.path.join(subi,'suite2p','plane0','C.npy'))
+                        creation_date_traces = datetime.fromtimestamp(creation_time_traces).strftime('%B %d, %Y, %H:%M:%S')
+                        datetime_traces      = datetime.strptime(creation_date_traces, '%B %d, %Y, %H:%M:%S')
+
+                        # rerun if suite2p has been updated OR if cleanupRawTraces has been updated.
+                        # in otherwords, if you've changed the suite2p parameter space or method for cleaning raw traces, then
+                        # you should rerun this.
+                        if datetime_traces < s2p_update_datetime or datetime_traces < clean_traces_datetime or datetime_traces < datetime_suite2p:
+                            print("Update to suite2p or cleanupRawTraces detected. Forced update to C and S.npy variables...")
+                            print("Postprocessing session:", subi)   
+                            logger = logger+'+postProcess.cleanup_raw_traces()'
+
+                            # log      
                             code_start = time.process_time()  
 
                             # get the C and S trace from deconvolution
@@ -562,84 +569,23 @@ while next == 0:
                             # report
                             procFOVess_end = time.process_time()
                             print(f"Total time to postprocess: {(procFOVess_end - code_start)/60:.2f} minutes")
-                        except:
-                            print("Failed to postprocess session:", subi)
 
-                    # TODO: code not running here
-                    if i['rerunClassifier'] == True:
-                        logger = logger+'+classifier'
-                        try:
+
+                        # TODO: code not running here
+                        if i['rerunClassifier'] == True:
+                            logger = logger+'+classifier'
                             print("Classifying cells with SVM and cleaning the results...")
                             obj.classify(session_path=os.path.join(subi, 'suite2p', 'plane0'))
-                        except:
-                            print("Failed to classify session:", subi)
-                # --------------------------------------------------------- #
-                # -------------------- CELL REG --------------------------- #
 
-                # if the cellreg data is not present (as would happen if you wipe and replace)
-                if len(crSearched)==0 or s2pFound==0:
-                    logger = logger+'+sessreg.suite2pToCellReg'
+                    # --------------------------------------------------------- #
+                    # -------------------- CELL REG --------------------------- #
 
-                    try:
-                        print("Preparing cellReg data for session:", subi)                        
-                        code_start = time.process_time() 
-
-                        # create cell reg file name
-                        reg_file_name = os.path.split(subi)[-1][0:20]
-                        if reg_file_name[-1]=='_':
-                            reg_file_name = reg_file_name+'CellReg.mat'
-                        else:
-                            reg_file_name = reg_file_name+'_CellReg.mat'
-
-                        # make cellReg file
-                        sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True, save_name=reg_file_name) 
-                        process_end = time.process_time()  
-                    except:
-                        print("Failed to make cellReg file for session:", subi)
-
-                # if file detected or cellRegReplace == True
-                elif len(crSearched)>0:
-
-                    # search for cellReg name
-                    cellreg_files = [j for j in crSearched if 'CellReg'.lower() in j.lower() and '.mat' in j.lower()]
-                    
-                    # if there are more than one file(s), remove the older file
-                    if len(cellreg_files) > 1:
-                        print("Multiple cellReg files detected. Removing older file...")
-                        cellreg_time = []
-                        for j in cellreg_files:
-
-                            # path to cellreg file
-                            temp_path = os.path.join(subi,'suite2p','plane0',j)
-
-                            # get creation time
-                            cellreg_time.append(os.path.getctime(temp_path))
-                        
-                        # now keep the newer file
-                        cellreg_time = np.array(cellreg_time)
-                        idx_keep = np.argmax(cellreg_time)
-                        idx_rem = np.argmin(cellreg_time)
-
-                        # remove the older file
-                        os.remove(os.path.join(subi,'suite2p','plane0',cellreg_files[idx_rem]))
-                        print("Removed older file:", cellreg_files[idx_rem])
-                        cellreg_files = [cellreg_files[idx_keep]]
-
-                        # redo search step
-                        dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
-                        dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
-      
-                    # identify when the cellReg code was run
-                    creation_time_reg = os.path.getmtime(os.path.join(subi,'suite2p','plane0',cellreg_files[0]))
-                    creation_date_reg = datetime.fromtimestamp(creation_time_reg).strftime('%B %d, %Y, %H:%M:%S')
-                    datetime_reg      = datetime.strptime(creation_date_reg, '%B %d, %Y, %H:%M:%S')
-
-                    # if you have recently updated suite2p, then you MUST update cellREg
-                    if datetime_reg < s2p_update_datetime or datetime_reg < datetime_suite2p:
-                        logger = 'sessreg.suite2pToCellReg'
+                    # if the cellreg data is not present (as would happen if you wipe and replace)
+                    if len(crSearched)==0 or s2pFound==0:
+                        logger = logger+'+sessreg.suite2pToCellReg'
 
                         try:
-                            print("Suite2p update detected. Forced rerun of cellReg mask saveout...")
+                            print("Preparing cellReg data for session:", subi)                        
                             code_start = time.process_time() 
 
                             # create cell reg file name
@@ -649,62 +595,97 @@ while next == 0:
                             else:
                                 reg_file_name = reg_file_name+'_CellReg.mat'
 
-                            # make cellReg file                        
+                            # make cellReg file
                             sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True, save_name=reg_file_name) 
-                            process_end = time.process_time()   
+                            process_end = time.process_time()  
                         except:
                             print("Failed to make cellReg file for session:", subi)
 
-                    else:
+                    # if file detected or cellRegReplace == True
+                    elif len(crSearched)>0:
 
-                        # rename from old file convention
-                        crSearched  = [i for i in dcSearch if 's2pCellReg.mat'.lower() in i.lower()]
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
-                        if len(crSearched) > 0:
-                            print("Detected old s2pCellReg.mat file convention. Renaming to match your session.")
-                            
-                            # create cell reg file name
-                            reg_file_name = os.path.split(subi)[-1][0:20]
-                            if reg_file_name[-1]=='_':
-                                reg_file_name = reg_file_name+'CellReg.mat'
-                            else:
-                                reg_file_name = reg_file_name+'_CellReg.mat'
-                            
-                            os.rename(os.path.join(subi,'suite2p','plane0','s2pCellReg.mat'), os.path.join(subi,'suite2p','plane0',reg_file_name))                            
-
-                # --------------------------------------------------------- #
-                # -------------------- OPTION FOR A CLEANED F ------------- #
-
-                # search for cleaned F and if saveCleanedF == True and there is no current F_clean.mat file, generate
-                cFSearched  = [i for i in dcSearch if 'F_clean.mat' in i]
-                if saveCleanedF==True and len(cFSearched)==0:
-                    logger = 'postProcess.save_modified_f'
-
-                    try:
-                        print("Saving out EMD denoised and sgolay/mad detrended signals for:", subi)                        
-                        code_start = time.process_time()  
-                        s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).save_modified_f() 
-                        process_end = time.process_time()
-                        print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
-                    except:
-                        print("Failed to save out cleaned F for session:", subi)
-
-                # otherwise, if there is an existing F_clean.mat file, check for datetime inconsistencies and regen as needed
-                elif len(cFSearched)>0 and saveCleanedF==True:
-
-                    # check datetime
-                    # if you want to save out the cleaned F
-                    creation_time_cleanF = os.path.getmtime(os.path.join(subi,'suite2p','plane0','F_clean.mat'))
-                    creation_date_cleanF = datetime.fromtimestamp(creation_time_cleanF).strftime('%B %d, %Y, %H:%M:%S')
-                    datetime_cleanF      = datetime.strptime(creation_date_cleanF, '%B %d, %Y, %H:%M:%S')
-
-                    # rerun if a suite2p update was detected
-                    if datetime_cleanF < s2p_update_datetime or datetime_cleanF < datetime_suite2p:
-                        logger = 'postProcess.cleanup_raw_traces()'
-                        print("Suite2p Update detected. Forced rerun of cleaned F saveout")
-                        print("Saving out EMD denoised and sgolay/mad detrended signals for:", subi)                        
+                        # search for cellReg name
+                        cellreg_files = [j for j in crSearched if 'CellReg'.lower() in j.lower() and '.mat' in j.lower()]
                         
+                        # if there are more than one file(s), remove the older file
+                        if len(cellreg_files) > 1:
+                            print("Multiple cellReg files detected. Removing older file...")
+                            cellreg_time = []
+                            for j in cellreg_files:
+
+                                # path to cellreg file
+                                temp_path = os.path.join(subi,'suite2p','plane0',j)
+
+                                # get creation time
+                                cellreg_time.append(os.path.getctime(temp_path))
+                            
+                            # now keep the newer file
+                            cellreg_time = np.array(cellreg_time)
+                            idx_keep = np.argmax(cellreg_time)
+                            idx_rem = np.argmin(cellreg_time)
+
+                            # remove the older file
+                            os.remove(os.path.join(subi,'suite2p','plane0',cellreg_files[idx_rem]))
+                            print("Removed older file:", cellreg_files[idx_rem])
+                            cellreg_files = [cellreg_files[idx_keep]]
+
+                            # redo search step
+                            dcSearch = [i for i in os.listdir(os.path.join(subi,'suite2p','plane0'))]
+                            dcSearched  = [i for i in dcSearch if 'C.npy' in i or 'S.npy' in i]
+        
+                        # identify when the cellReg code was run
+                        creation_time_reg = os.path.getmtime(os.path.join(subi,'suite2p','plane0',cellreg_files[0]))
+                        creation_date_reg = datetime.fromtimestamp(creation_time_reg).strftime('%B %d, %Y, %H:%M:%S')
+                        datetime_reg      = datetime.strptime(creation_date_reg, '%B %d, %Y, %H:%M:%S')
+
+                        # if you have recently updated suite2p, then you MUST update cellREg
+                        if datetime_reg < s2p_update_datetime or datetime_reg < datetime_suite2p:
+                            logger = 'sessreg.suite2pToCellReg'
+
+                            try:
+                                print("Suite2p update detected. Forced rerun of cellReg mask saveout...")
+                                code_start = time.process_time() 
+
+                                # create cell reg file name
+                                reg_file_name = os.path.split(subi)[-1][0:20]
+                                if reg_file_name[-1]=='_':
+                                    reg_file_name = reg_file_name+'CellReg.mat'
+                                else:
+                                    reg_file_name = reg_file_name+'_CellReg.mat'
+
+                                # make cellReg file                        
+                                sessreg.suite2pToCellReg(fnames = subi, mask_overlap = True, save_name=reg_file_name) 
+                                process_end = time.process_time()   
+                            except:
+                                print("Failed to make cellReg file for session:", subi)
+
+                        else:
+
+                            # rename from old file convention
+                            crSearched  = [i for i in dcSearch if 's2pCellReg.mat'.lower() in i.lower()]
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+                            if len(crSearched) > 0:
+                                print("Detected old s2pCellReg.mat file convention. Renaming to match your session.")
+                                
+                                # create cell reg file name
+                                reg_file_name = os.path.split(subi)[-1][0:20]
+                                if reg_file_name[-1]=='_':
+                                    reg_file_name = reg_file_name+'CellReg.mat'
+                                else:
+                                    reg_file_name = reg_file_name+'_CellReg.mat'
+                                
+                                os.rename(os.path.join(subi,'suite2p','plane0','s2pCellReg.mat'), os.path.join(subi,'suite2p','plane0',reg_file_name))                            
+
+                    # --------------------------------------------------------- #
+                    # -------------------- OPTION FOR A CLEANED F ------------- #
+
+                    # search for cleaned F and if saveCleanedF == True and there is no current F_clean.mat file, generate
+                    cFSearched  = [i for i in dcSearch if 'F_clean.mat' in i]
+                    if saveCleanedF==True and len(cFSearched)==0:
+                        logger = 'postProcess.save_modified_f'
+
                         try:
+                            print("Saving out EMD denoised and sgolay/mad detrended signals for:", subi)                        
                             code_start = time.process_time()  
                             s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).save_modified_f() 
                             process_end = time.process_time()
@@ -712,80 +693,103 @@ while next == 0:
                         except:
                             print("Failed to save out cleaned F for session:", subi)
 
-                # option to remove the .tif file bc there exists redundancy in data.bin
-                if rem_tif == True:
-                    print("Erasing img.tif file:", subi)                        
-                    thorfuns.remTif(os.path.join(subi,'img.tif'))
+                    # otherwise, if there is an existing F_clean.mat file, check for datetime inconsistencies and regen as needed
+                    elif len(cFSearched)>0 and saveCleanedF==True:
 
-                success_subi.append(subi) # save variable for reporting
+                        # check datetime
+                        # if you want to save out the cleaned F
+                        creation_time_cleanF = os.path.getmtime(os.path.join(subi,'suite2p','plane0','F_clean.mat'))
+                        creation_date_cleanF = datetime.fromtimestamp(creation_time_cleanF).strftime('%B %d, %Y, %H:%M:%S')
+                        datetime_cleanF      = datetime.strptime(creation_date_cleanF, '%B %d, %Y, %H:%M:%S')
 
-                #except:
+                        # rerun if a suite2p update was detected
+                        if datetime_cleanF < s2p_update_datetime or datetime_cleanF < datetime_suite2p:
+                            logger = 'postProcess.cleanup_raw_traces()'
+                            print("Suite2p Update detected. Forced rerun of cleaned F saveout")
+                            print("Saving out EMD denoised and sgolay/mad detrended signals for:", subi)                        
+                            
+                            try:
+                                code_start = time.process_time()  
+                                s2pfuns.postProcess(s2ppath=os.path.join(subi,'suite2p','plane0')).save_modified_f() 
+                                process_end = time.process_time()
+                                print(f"Total time to postprocess: {(process_end - code_start)/60:.2f} minutes")
+                            except:
+                                print("Failed to save out cleaned F for session:", subi)
 
-                 #   with open(os.path.join(subi,'recurseConvertError.txt'), 'w') as f:
-                  #      f.write('Error in {}. Please check the code.'.format(logger))
+                    # option to remove the .tif file bc there exists redundancy in data.bin
+                    if rem_tif == True:
+                        print("Erasing img.tif file:", subi)                        
+                        thorfuns.remTif(os.path.join(subi,'img.tif'))
 
-                   # failed_subi.append(subi) # save variable for reporting
-                    #print("Could not process",subi)
+                    success_subi.append(subi) # save variable for reporting
 
-            # --------------------------------------------------------- #
-            # -------------------- CONVERT BEHAVIOR ------------------- #
+                    #except:
 
-            # convert behavior
-            #TODO: Once you update behavioral code, include a datetime clause
-            if len(behSearch) > 0 and busyBee is False:
-                
-                # search for existing recurseConvertError.txt file and delete it
-                if os.path.exists(os.path.join(subi,'recurseConvertError.txt')):
-                    print("Deleting old recurseConvertError.txt file",os.path.join(subi,'recurseConvertError.txt'))
-                    os.remove(os.path.join(subi,'recurseConvertError.txt'))
+                    #   with open(os.path.join(subi,'recurseConvertError.txt'), 'w') as f:
+                    #      f.write('Error in {}. Please check the code.'.format(logger))
 
-                # convert - haven't tested the behConvSearch
-                behConvSearch = [k for k in dir_contents if 'beh' in k and '.mat' in k]
-                try:
-                    if behReplace == True or len(behConvSearch) == 0:
-                        try:
-                            thorfuns.importThorsync(bpath = subi)
-                        except:
-                            print("Failed to convert behavioral data in:",subi)
+                    # failed_subi.append(subi) # save variable for reporting
+                        #print("Could not process",subi)
+
+                # --------------------------------------------------------- #
+                # -------------------- CONVERT BEHAVIOR ------------------- #
+
+                # convert behavior
+                #TODO: Once you update behavioral code, include a datetime clause
+                if len(behSearch) > 0 and busyBee is False:
+                    
+                    # search for existing recurseConvertError.txt file and delete it
+                    if os.path.exists(os.path.join(subi,'recurseConvertError.txt')):
+                        print("Deleting old recurseConvertError.txt file",os.path.join(subi,'recurseConvertError.txt'))
+                        os.remove(os.path.join(subi,'recurseConvertError.txt'))
+
+                    # convert - haven't tested the behConvSearch
+                    behConvSearch = [k for k in dir_contents if 'beh' in k and '.mat' in k]
+                    try:
+                        if behReplace == True or len(behConvSearch) == 0:
+                            try:
+                                thorfuns.importThorsync(bpath = subi)
+                            except:
+                                print("Failed to convert behavioral data in:",subi)
+                    except:
+                        print("Failed to convert behavioral data in:",subi)
+
+                        with open(os.path.join(subi,'recurseConvertError.txt'), 'w') as f:
+                            f.write('Error in {}. Please check the code.'.format('importThorsync'))
+
+                    # if you want to save the behavior in the fall
+                    #if i['saveBehInFall'] == True:
+                        #sio.loadmat(os.path.join(subi,'beh.mat')) # load the behavior file
+                        #sio.loadmat(os.path.join())
+                        # save the behavior file in the fall
+                # --------------------------------------------------------- #
+                # --------------------- HOUSE KEEPING --------------------- #
+
+                # delete datetime variable so we are only working with each sessions unique timedate data
+                try: # sometimes, some loops don't have these data, like say loop #1
+                    del datetime_binary, datetime_cleanF, datetime_reg, datetime_suite2p, datetime_img, datetime_traces
+                    del creation_date_binary, creation_date_cleanF, creation_date_img
+                    del creation_date_reg, creation_date_suite2p, creation_date_traces, creation_time_binary, creation_time_cleanF
+                    del creation_time_img, creation_time_reg, creation_time_suite2p, creation_time_traces, cellreg_files
                 except:
-                    print("Failed to convert behavioral data in:",subi)
+                    pass
 
-                    with open(os.path.join(subi,'recurseConvertError.txt'), 'w') as f:
-                        f.write('Error in {}. Please check the code.'.format('importThorsync'))
-
-                # if you want to save the behavior in the fall
-                #if i['saveBehInFall'] == True:
-                    #sio.loadmat(os.path.join(subi,'beh.mat')) # load the behavior file
-                    #sio.loadmat(os.path.join())
-                    # save the behavior file in the fall
             # --------------------------------------------------------- #
-            # --------------------- HOUSE KEEPING --------------------- #
+            # -------------------- SAVING RESULTS --------------------- #
 
-            # delete datetime variable so we are only working with each sessions unique timedate data
-            try: # sometimes, some loops don't have these data, like say loop #1
-                del datetime_binary, datetime_cleanF, datetime_reg, datetime_suite2p, datetime_img, datetime_traces
-                del creation_date_binary, creation_date_cleanF, creation_date_img
-                del creation_date_reg, creation_date_suite2p, creation_date_traces, creation_time_binary, creation_time_cleanF
-                del creation_time_img, creation_time_reg, creation_time_suite2p, creation_time_traces, cellreg_files
-            except:
-                pass
-
-        # --------------------------------------------------------- #
-        # -------------------- SAVING RESULTS --------------------- #
-
-        # TODO This needs to be more specific about what failed***
-        # only save the failed attempts
-        if len(failed_subi) > 0:
-            # Save list to .csv file
-            #with open(os.path.join(i['Folder'],'recurseConvertComplete.csv'), 'w', newline='') as f:
-                #writer = csv.writer(f)
-                #writer.writerow(success_subi)
-            with open(os.path.join(i['Folder'],'recurseConvertFailed.csv'), 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([failed_subi])                        
-    
-    # to exit or not to exit?
-    if run_opts[run_method]=='iterate':
-        next = 1
+            # TODO This needs to be more specific about what failed***
+            # only save the failed attempts
+            if len(failed_subi) > 0:
+                # Save list to .csv file
+                #with open(os.path.join(i['Folder'],'recurseConvertComplete.csv'), 'w', newline='') as f:
+                    #writer = csv.writer(f)
+                    #writer.writerow(success_subi)
+                with open(os.path.join(i['Folder'],'recurseConvertFailed.csv'), 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([failed_subi])                        
+        
+        # to exit or not to exit?
+        if run_opts[run_method]=='iterate':
+            next = 1
 
 

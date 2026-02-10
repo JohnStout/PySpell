@@ -32,6 +32,9 @@ Planned addon:
 #TODO: Go through code and snake_case the functions, camelCase objects
 
 # load modules
+import warnings
+warnings.filterwarnings('ignore', message='Could not find cvxpy')
+
 from suite2p.extraction import dcnv
 import numpy as np
 from scipy import stats
@@ -109,6 +112,10 @@ def _process_single_cell_foopsi(cell_idx, F_row, Fneu_row, fr=7.5, correct_spk_d
         dict with: cell_idx, c (calcium), sp (spikes), success, bl, g, sn, lam
     """
     import deconvolution as dc
+    import warnings
+    
+    # Suppress numpy RuntimeWarnings (divide by zero, invalid value) - expected for edge cases
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
     
     nTimepoints = len(F_row)
     result = {
@@ -184,15 +191,22 @@ def _process_single_cell_foopsi(cell_idx, F_row, Fneu_row, fr=7.5, correct_spk_d
             optimize_g=optimized_g, g=g2
         )
         
-        # Apply drift correction if requested
-        if correct_spk_drift:
-            sp = correct_spike_drift(sp, f_processed=f_processed, fr=fr)
-        
-        # Normalize spike train by MAD
+        # Normalize spike train by MAD first (before drift correction)
         resid = f_processed - c
         mad = np.median(np.abs(resid - np.median(resid)))
         if mad > 0:
             sp = sp / mad
+        
+        # Apply drift correction if requested (on normalized spikes)
+        if correct_spk_drift:
+            sp, _ = correct_spike_drift_model(
+                sp, 
+                r2_thresh=0.10,
+                model="auto",
+                clip=(0.2, 5.0),
+                fit_top_quantile=0.6,
+                robust=True
+            )
         
         # Store results
         result['c'] = c
@@ -259,7 +273,142 @@ def correct_spike_drift(sp, f_processed, fr):
     sp_corrected = sp * correction_factor
     
     return sp_corrected
+
+
+def correct_spike_drift_model(
+    sp_norm,
+    r2_thresh=0.10,
+    model="auto",                # "linear", "exp", or "auto"
+    clip=(0.2, 5.0),             # correction factor limits
+    t_ref_mode="median",         # "median" or "midpoint"
+    fit_top_quantile=0.6,        # fit using top spikes to avoid floor effects
+    robust=True
+):
+    """
+    Correct multiplicative drift in spike amplitudes across time by fitting a trend
+    to spike amplitudes vs time and multiplying by the inverse trend (normalized to a reference).
     
+    Args:
+        sp_norm: 1D array length T (spike train), should be MAD-normalized
+        r2_thresh: minimum R² to trigger correction (default 0.10)
+        model: "linear", "exp", or "auto" (auto chooses based on R²)
+        clip: (min, max) limits for correction factor
+        t_ref_mode: "median" or "midpoint" for reference time
+        fit_top_quantile: fit on top X% of spikes to avoid floor effects
+        robust: if True, apply outlier rejection in log space
+    
+    Returns:
+        sp_corr: corrected spike train (length T)
+        info: dict with fit statistics, chosen model, correction factor, etc.
+    """
+    from scipy.stats import linregress
+    
+    T = len(sp_norm)
+    idx = np.flatnonzero(sp_norm > 0)
+    if idx.size < 8:
+        return sp_norm.copy(), {"model": "none", "r2_lin": 0.0, "r2_exp": 0.0}
+
+    amps = sp_norm[idx].astype(np.float64)
+
+    # Focus on higher spikes to reduce threshold/floor effects flattening the fit
+    q = np.quantile(amps, fit_top_quantile)
+    keep = amps >= q
+    idx_fit = idx[keep]
+    amps_fit = amps[keep]
+
+    if idx_fit.size < 6:
+        idx_fit = idx
+        amps_fit = amps
+
+    eps = 1e-12
+    t = idx_fit.astype(np.float64)
+
+    # --- Linear fit on amps ---
+    slope_lin, int_lin, r_lin, _, _ = linregress(t, amps_fit)
+    r2_lin = float(r_lin**2)
+
+    # --- Exponential fit via regression on log(amps) ---
+    loga = np.log(amps_fit + eps)
+
+    # Robust outlier rejection in log space (good for multiplicative noise)
+    if robust and idx_fit.size >= 10:
+        med = np.median(loga)
+        mad_log = np.median(np.abs(loga - med)) + eps
+        z = 0.6745 * (loga - med) / mad_log
+        inliers = np.abs(z) < 3.5
+        t = t[inliers]
+        amps_fit = amps_fit[inliers]
+        loga = loga[inliers]
+
+        if t.size < 6:
+            return sp_norm.copy(), {"model": "none", "r2_lin": r2_lin, "r2_exp": 0.0}
+
+    slope_exp, int_exp, r_exp, _, _ = linregress(t, loga)
+    r2_exp = float(r_exp**2)
+
+    # Choose model
+    chosen = model
+    if model == "auto":
+        chosen = "exp" if (r2_exp > r2_lin + 0.05) else "linear"
+
+    # Reference time
+    if t_ref_mode == "median":
+        t_ref = float(np.median(t))
+    elif t_ref_mode == "midpoint":
+        t_ref = float(T / 2.0)
+    else:
+        t_ref = float(np.median(t))
+
+    t_all = np.arange(T, dtype=np.float64)
+
+    # Build corr_all(t) = pred(t_ref) / pred(t)
+    if chosen == "exp":
+        log_pred_ref = int_exp + slope_exp * t_ref
+        log_pred_all = int_exp + slope_exp * t_all
+        corr_all = np.exp(log_pred_ref - log_pred_all) # division in regular space is subtraction in log-space
+        r2_used = r2_exp
+    else:
+        pred_ref = int_lin + slope_lin * t_ref
+        pred_all = int_lin + slope_lin * t_all
+        pred_ref = max(pred_ref, eps)
+        pred_all = np.maximum(pred_all, eps)
+        corr_all = pred_ref / pred_all # rescale spikes based on the reference time. If median, you'll shrink or amplify
+        r2_used = r2_lin
+
+    corr_all = np.clip(corr_all, clip[0], clip[1])
+
+    # Only apply if meaningful trend
+    if r2_used < r2_thresh:
+        return sp_norm.copy(), {
+            "model": "none",
+            "r2_lin": r2_lin,
+            "r2_exp": r2_exp,
+            "r2_used": r2_used,
+            "corr_all": np.ones(T, dtype=np.float64),
+            "slope_lin": slope_lin, "int_lin": int_lin,
+            "slope_exp": slope_exp, "int_exp": int_exp
+        }
+
+    sp_corr = sp_norm * corr_all
+
+    # Preserve median spike amplitude (prevents global gain shifts)
+    amps_before = sp_norm[idx]
+    amps_after = sp_corr[idx]
+    med_before = np.median(amps_before)
+    med_after = np.median(amps_after) + eps
+    sp_corr *= (med_before / med_after)
+
+    return sp_corr, {
+        "model": chosen,
+        "r2_lin": r2_lin,
+        "r2_exp": r2_exp,
+        "r2_used": r2_used,
+        "corr_all": corr_all,
+        "t_ref": t_ref,
+        "slope_lin": slope_lin, "int_lin": int_lin,
+        "slope_exp": slope_exp, "int_exp": int_exp
+    }
+
 
 def percentile_detrend(trace, fr=7.5, window_sec=60, percentile=10, add_median_back=True):
     """
@@ -437,28 +586,30 @@ def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = N
     # default ops
     if alt_ops is None:
 
-        # alt_ops['pre_smooth'] = 2, while ops['pre_smooth'] = 0
-        # alt_ops['spatial_taper'] = 50 while ops['spatial_taper'] = 40
-        # alt_ops['max_overlap'] = 1.0 while ops['max_overlap'] = 0.75 **
-        # alt_ops['anatomical_only'] = 1, ops['anatomical_only'] = 0
-        # alt_ops['diameter'] = 12, ops['diameter'] = 0
-        # alt_ops['soma_crop'] = 1.0, ops['soma_crop'] = True **
-
         # get ops
         ops = suite2p.default_ops()
 
         # define frame rate based on metadata
         fr = float(file['ThorImageExperiment']['LSM']['@frameRate'])
+        z  = int(file['ThorImageExperiment']['ZStage']['@steps']) # check this variable
+
+        # detect which image mode
+        imgmode = 'multiplane' if z > 1 else 'single plane'
 
         # assuming you are using fast z capture with 3 planes (subtracting the flyback
         # also assuming the flyback was removed
-        if 'PlaneZ' in movie_name:
+        if 'PlaneZ' in movie_name and imgmode == 'multiplane':
+            # this is for the case of multi-plane z imaging
             ops['nplanes'] = 3
             print("Frame rate of",fr,'changed to',fr * (3/4))
             fr =  fr * (3/4) # we tossed the flyback frame and so therefore, the result is 3 plane or 3/4 planes with the fourth having been the flyback
-        else:
+        elif imgmode == 'multiplane':
+            # this is the case for multi-plane z imaging but we have run a max projection already, compressing to single plane
             print("Frame rate of",fr,'changed to',fr/4)
             fr = fr/4
+        else:
+            # true single plane imaging
+            print("Frame rate of",fr,'unchanged')
 
         # get default suite2p inputs - update on 12/13/2024 after noticing discrepancy in Tims and default params
         # spellOps result in ROI that look overly smoothed out while default ops are not strict enough. This is a play to find middle ground.
@@ -491,6 +642,33 @@ def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = N
 
         # allowance for overlap
         ops['allow_overlap'] = False # use distance measurement to identify whether a cell should be merged
+
+        # --- SMALL FOV HANDLING (e.g. 96x96) ---
+        # Detect if image is small and scale parameters proportionally
+        # Reference: 512x512 uses block_size=128, min_neuropil_pixels=350
+        img_h, img_w = images.shape[1], images.shape[2]
+        if img_h < 256 or img_w < 256:
+            scale = min(img_h, img_w) / 512.0  # e.g. 96/512 = 0.1875
+            print(f"\n  Small FOV detected ({img_h}x{img_w}), scale factor: {scale:.3f}")
+            print(f"  Scaling suite2p parameters for native small-image processing...")
+            
+            # block_size: 128 * 0.1875 = 24 -> round to 24
+            scaled_block = max(16, int(128 * scale))
+            ops['block_size'] = [scaled_block, scaled_block]
+            
+            # min_neuropil_pixels: 350 * 0.1875 = ~66 -> use at least 48
+            ops['min_neuropil_pixels'] = max(48, int(350 * scale))
+            
+            # inner_neuropil_radius: 2 * 0.1875 = ~0.4 -> floor to 1
+            ops['inner_neuropil_radius'] = max(1, int(2 * scale))
+            
+            # spatial_taper: 40 * 0.1875 = ~7.5 -> round to 8
+            ops['spatial_taper'] = max(5, int(40 * scale))
+            
+            print(f"    block_size = {ops['block_size']}")
+            print(f"    min_neuropil_pixels = {ops['min_neuropil_pixels']}")
+            print(f"    inner_neuropil_radius = {ops['inner_neuropil_radius']}")
+            print(f"    spatial_taper = {ops['spatial_taper']}")
 
         # see here: https://suite2p.readthedocs.io/en/latest/settings.html
         # tau: (float, default: 1.0) The timescale of the sensor (in seconds), used for deconvolution kernel. The kernel is fixed to have this decay and is not fit to the data. We recommend:
@@ -542,8 +720,13 @@ def fast_suite2p(imgpath: str, savepath: str = '', gcamp: str ='6f', alt_ops = N
 
         # load in the data and save out summary images
         F, Fneu, spks, stat, ops, iscell, blF = read_s2p(fpath=output_ops['save_path0'])
-        tf.imwrite(os.path.join(output_ops['save_path0'],'meanImg.tif'), output_ops['meanImg'], bigtiff=True)
-        tf.imwrite(os.path.join(output_ops['save_path0'],'maxProj.tif'), output_ops['max_proj'], bigtiff=True)
+        
+        # Remove existing files first, then save summary images
+        for fname, data in [('meanImg.tif', output_ops['meanImg']), ('maxProj.tif', output_ops['max_proj'])]:
+            fpath_tif = os.path.join(output_ops['save_path0'], fname)
+            if os.path.exists(fpath_tif):
+                os.remove(fpath_tif)
+            tf.imwrite(fpath_tif, data, bigtiff=True)
     else:
         print("The total size of your imaging data is <",200," samples. Not performing suite2p.")
         output_ops = False
@@ -739,8 +922,17 @@ class postProcess():
 
             # save traces and return
             print(f"Saving results to {self.s2ppath}")
-            np.save(os.path.join(self.s2ppath, 'C.npy'), C)
-            np.save(os.path.join(self.s2ppath, 'S.npy'), S)
+            # Remove existing files first, then save new ones
+            c_path = os.path.join(self.s2ppath, 'C.npy')
+            s_path = os.path.join(self.s2ppath, 'S.npy')
+            
+            if os.path.exists(c_path):
+                os.remove(c_path)
+            if os.path.exists(s_path):
+                os.remove(s_path)
+            
+            np.save(c_path, C)
+            np.save(s_path, S)
             print("Saved denoised fluorescence (C) and deconvolved spikes (S)")
 
             # save out MATLAB variables
@@ -749,6 +941,7 @@ class postProcess():
     def save_fall(self):    
         """Save Fall.mat with all suite2p + C/S variables."""
         from datetime import datetime
+        import gc
         
         # Convert ops to matlab compatible format
         # Skip numpy arrays and convert datetime objects to strings
@@ -762,12 +955,17 @@ class postProcess():
             else:
                 ops_matlab[k] = v
         
-        # Full save of the Fall.mat file with all suite2p + C/S variables
-        sio.savemat(os.path.join(self.s2ppath, 'Fall.mat'), mdict={
+        # Remove existing file first, then save
+        fall_path = os.path.join(self.s2ppath, 'Fall.mat')
+        mdict = {
             'F': self.F, 'Fneu': self.Fneu, 'iscell': self.iscell,
             'stat': self.stat, 'C': self.C, 'S': self.S,
             'ops': ops_matlab, 's2pSpk': self.spks
-        })            
+        }
+        
+        if os.path.exists(fall_path):
+            os.remove(fall_path)
+        sio.savemat(fall_path, mdict=mdict)
         print("Saved Fall.mat")
 
     # method to denoise data, do not use before OASIS
@@ -916,8 +1114,13 @@ class postProcess():
         # save
         fpath = parse_fpath(fpath=self.s2ppath)
 
-        # save out as .mat
-        sio.savemat(file_name = os.path.join(fpath, 'F_clean.mat'), mdict={'f': f_clean, 'info': 'this signal was denoised with EMD by dropping the first two high freq components, then detrended with sgolay'})
+        # Remove existing file first, then save
+        fclean_path = os.path.join(fpath, 'F_clean.mat')
+        mdict = {'f': f_clean, 'info': 'this signal was denoised with EMD by dropping the first two high freq components, then detrended with sgolay'}
+        
+        if os.path.exists(fclean_path):
+            os.remove(fclean_path)
+        sio.savemat(file_name=fclean_path, mdict=mdict)
 
         # TO FACT CHECK FOR YOURSELF
         '''
@@ -1081,12 +1284,13 @@ class postProcess():
             fpath = os.path.split(os.path.split(fpath)[0])[0]
 
         print("Writing summary images to",fpath)
-        tf.imwrite(os.path.join(fpath,'max_proj.tif'),
-                max_proj)
-        tf.imwrite(os.path.join(fpath,'mean_img.tif'),
-                mean_img)
-        tf.imwrite(os.path.join(fpath,'mean_imgE.tif'),
-                mean_imgE)
+        
+        # Remove existing files first, then save
+        for fname, data in [('max_proj.tif', max_proj), ('mean_img.tif', mean_img), ('mean_imgE.tif', mean_imgE)]:
+            fpath_tif = os.path.join(fpath, fname)
+            if os.path.exists(fpath_tif):
+                os.remove(fpath_tif)
+            tf.imwrite(fpath_tif, data)
 
 # ---------------------------------------- #
 #self = cellClassifier(training_sessions_directory=os.path.join(rootfun.dropbox_root(),'OtherData','ClassifierBuildSuite2p'))
@@ -1811,7 +2015,12 @@ class cellClassifier():
         # 1) Clean out NaNs/Infs and remember who got dropped
         df_clean, idx_rem = self.cleanup_classifier_data(df_predict)
 
-        # 1b) pull out skewF for edge detection
+        # 1b) Check if any cells remain to classify
+        if df_clean.empty:
+            print("WARNING: No valid cells found for classification after cleaning. Skipping.")
+            return None, None, None
+
+        # 1c) pull out skewF for edge detection
         skew_vals = df_clean['skewF']
 
         # 2) Subset to the features we trained on
@@ -1942,9 +2151,17 @@ class cellClassifier():
             iscell[iscell_out, 0] = 1.0
             iscell[:, 1] = probabilities[:, 1]
 
-            # save
-            np.save(os.path.join(i, 'iscell.npy'), iscell, allow_pickle=True)
-            np.save(os.path.join(i, 'iscell_og.npy'), iscell_og, allow_pickle=True)
+            # Remove existing files first, then save new ones
+            iscell_path = os.path.join(i, 'iscell.npy')
+            iscell_og_path = os.path.join(i, 'iscell_og.npy')
+            
+            if os.path.exists(iscell_path):
+                os.remove(iscell_path)
+            if os.path.exists(iscell_og_path):
+                os.remove(iscell_og_path)
+            
+            np.save(iscell_path, iscell, allow_pickle=True)
+            np.save(iscell_og_path, iscell_og, allow_pickle=True)
 
             # save to .mat
             ops_matlab = ops.copy()
@@ -1953,10 +2170,18 @@ class cellClassifier():
                     ops_matlab["date_proc"] = str(
                         datetime.strftime(ops_matlab["date_proc"], "%Y-%m-%d %H:%M:%S.%f"))
                 except:
-                    pass        
-            sio.savemat(os.path.join(i, 'Fall.mat'), mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks})
-            print("Saved iscell to", os.path.join(i, 'iscell.npy'))
-            print("Saved old 'iscell' to", os.path.join(i, 'iscell_og.npy'))
+                    pass
+            
+            # Remove existing Fall.mat first, then save
+            fall_path = os.path.join(i, 'Fall.mat')
+            mdict = {'F': F, 'Fneu': Fneu, 'iscell': iscell, 'stat': stat, 'C': C, 'S': S, 'ops': ops_matlab, 's2pSpk': spks}
+            
+            if os.path.exists(fall_path):
+                os.remove(fall_path)
+            sio.savemat(fall_path, mdict=mdict)
+            
+            print("Saved iscell to", iscell_path)
+            print("Saved old 'iscell' to", iscell_og_path)
 
     # classify
     def classify(self, session_path: str):
@@ -1967,7 +2192,10 @@ class cellClassifier():
         # test classifier
         predictions, probabilities, decision_scores = self.predict_cell(df_predict = df_predict)
 
-        self.rewrite_data(predict_sessions = [session_path], predictions=predictions, probabilities = probabilities)
+        if predictions is not None:
+            self.rewrite_data(predict_sessions = [session_path], predictions=predictions, probabilities = probabilities)
+        else:
+            print(f"Skipping rewrite_data for {session_path} due to lack of valid cells.")
 
 # ---------------------------------------- #
 # --  HELPER AND STAND ALONE FUNCTIONS  -- #

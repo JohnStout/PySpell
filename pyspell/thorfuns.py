@@ -68,6 +68,9 @@ class RawToTif():
     12/14/2024: @JS changed & bit operator to "and" logical operator.
     12/14/2024: Addition/fixing of suite2p method
     12/14/2024: Apparently, on our machine, parallel processing may actually increw time for numpy conversion. Now file is converted in __init__
+    2/9/2025: @JS updated I/O operations on __init__ to improve loading
+                - Updated the method to convert, changing loading/converting mechanisms based on whether the data are multiplane or single plane
+                - Updated the method to convert to handle LED artifacts when opto stim occurs during same plane acquisition
     '''
 
     def __init__(self, filepath: str):
@@ -112,34 +115,38 @@ class RawToTif():
         dims=(z,t,y,x)
 
         # data
-        # Read the .raw file
-        # Initialize an empty list to hold the chunks
-        chunks = []
-        chunk_shape = (512, 512)
-
-        # Define the chunk size in bytes
-        chunk_size = np.prod(chunk_shape) * np.dtype('int16').itemsize
-
-        # Read the file in chunks
+        # Read the .raw file - FAST METHOD using np.fromfile
         print("Reading image data...")
-        with open(filepath, 'rb') as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                chunks.append(np.frombuffer(chunk, dtype='int16').reshape(chunk_shape))
-
-        # now using the chunks variable, split the data according to recording dimensions
-        total_frames = int(len(chunks)/4) # 3 planes and a flyback
-        #plane0 = chunks[::4]
-        #plane1 = chunks[1::4]
-        #plane2 = chunks[2::4]
-        #flyback = chunks[3::4]
-
-        # Remove every 4th element starting at element 4
-        planes = [elem for i, elem in enumerate(chunks) if (i + 1) % 4 != 0]
-        assert int(len(planes)/3) == total_frames, "Something is wrong with your removal of flyback frames"
-
+        read_start = time.process_time()
+        
+        # Read entire file at once (MUCH faster than chunk-by-chunk)
+        raw_data = np.fromfile(filepath, dtype='int16')
+        
+        # Calculate expected frame count
+        pixels_per_frame = y * x
+        total_raw_frames = len(raw_data) // pixels_per_frame
+        
+        # Reshape to (n_frames, y, x)
+        raw_data = raw_data[:total_raw_frames * pixels_per_frame]  # trim any partial frame
+        all_frames = raw_data.reshape(total_raw_frames, y, x)
+        
+        print(f"  Read {total_raw_frames} raw frames in {time.process_time() - read_start:.2f}s")
+        
+        # Remove flyback frames (every 4th frame for multiplane)
+        if z > 1:
+            # For multiplane: frames are [p0, p1, p2, flyback, p0, p1, p2, flyback, ...]
+            # Keep frames where (index % 4) != 3
+            keep_mask = np.arange(total_raw_frames) % 4 != 3
+            planes = np.ascontiguousarray(all_frames[keep_mask])  # FAST: keep as numpy array
+            total_frames = total_raw_frames // 4
+            assert len(planes) == total_frames * 3, f"Frame count mismatch: {len(planes)} vs expected {total_frames * 3}"
+        else:
+            # Single plane: no flyback to remove - just use the array directly
+            planes = all_frames  # No copy needed, just reassign reference
+            total_frames = total_raw_frames
+        
+        print(f"  Kept {len(planes)} imaging frames (removed {total_raw_frames - len(planes)} flyback frames)")
+        del raw_data  # free memory (all_frames may be aliased to planes)
 
         '''
         # instead of pulling all of that into memory, lets write it immediately, then call the mapped data
@@ -165,11 +172,384 @@ class RawToTif():
         self.rootpath = rootpath
         self.root_contents = root_contents
         self.metadata = file
+        self.imgmode = 'multiplane' if z > 1 else 'single plane'
         #self.idx_offset_np = offset_list # this is really important for indexing from the np.memmap .raw file
 
         print("rootpath:",self.rootpath)
 
-    def convert(self, method: str = 'max_proj', chunker: int = 1000, led_artifacts: str = 'y', memmap_write: bool = False, wipe_and_replace: bool = False, run_parallel = True):
+    def test_led_artifacts(
+        self,
+        outlier_thresh: float = 3.0,
+        neg_z_exclude: float = 3.0,      # NEW: exclude negative-z warmup frames from CLEAN pool
+        sigma_hp: float = 12.0,
+        template_n: int = 30,
+        bg_keep_frac: float = 0.70,      # darkest fraction used as "background"
+        do_rowwise_bg: bool = False,
+        do_rowwise_template_scale: bool = False,
+        save_fig: bool = True,
+    ):
+        """
+        Diagnostic for LED artifact detection & correction comparisons.
+
+        Compares:
+        1) Highpass (preview)
+        2) Interpolation (preview; loses info)
+        3) Template subtraction (scaled; preserves events)
+        4) Background subtraction (scalar; preserves events if artifact is mostly offset)
+            (+ optional row-wise version for banding)
+
+        IMPORTANT CHANGE:
+        - LED events are detected as POSITIVE outliers only: z > outlier_thresh
+        - Negative outliers (laser power-up) are excluded from *clean/background/template* pools:
+                z < -neg_z_exclude
+        """
+        import os
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from scipy.ndimage import gaussian_filter
+        import scipy.stats as stats
+        from matplotlib.gridspec import GridSpec
+
+        print("=" * 70)
+        print("LED ARTIFACT DETECTION & CORRECTION METHOD COMPARISON")
+        print("=" * 70)
+
+        n_frames = len(self.planes)
+
+        # --------------------------
+        # Helpers
+        # --------------------------
+        def highpass(img: np.ndarray, sigma):
+            if sigma is None or sigma <= 0:
+                return img.copy()
+            return img - gaussian_filter(img, sigma=float(sigma))
+
+        def background_mask(ref_img: np.ndarray, keep_frac: float = 0.70):
+            thr = np.quantile(ref_img, keep_frac)
+            return ref_img <= thr
+
+        def bg_level(img: np.ndarray, mask: np.ndarray):
+            return float(np.median(img[mask]))
+
+        def correct_bg_offset(frame: np.ndarray, ref: np.ndarray, keep_frac: float = 0.70):
+            m = background_mask(ref, keep_frac=keep_frac)
+            d = bg_level(frame, m) - bg_level(ref, m)
+            return frame.astype(np.float32) - d, d
+
+        def correct_bg_rowwise(frame: np.ndarray, ref: np.ndarray, keep_frac: float = 0.70):
+            f = frame.astype(np.float32)
+            r = ref.astype(np.float32)
+            thr = np.quantile(r, keep_frac)
+            m = r <= thr
+            row_off = np.zeros((f.shape[0],), dtype=np.float32)
+            for rr in range(f.shape[0]):
+                mr = m[rr, :]
+                if np.any(mr):
+                    row_off[rr] = np.median(f[rr, mr]) - np.median(r[rr, mr])
+            return f - row_off[:, None], row_off
+
+        def estimate_scale_global(frame: np.ndarray, template: np.ndarray, mask: np.ndarray, eps: float = 1e-6):
+            f = frame[mask].ravel().astype(np.float32)
+            t = template[mask].ravel().astype(np.float32)
+            return float((f @ t) / ((t @ t) + eps))
+
+        def estimate_scale_rowwise(frame: np.ndarray, template: np.ndarray, mask: np.ndarray, eps: float = 1e-6):
+            f = frame.astype(np.float32)
+            t = template.astype(np.float32)
+            a = np.zeros((f.shape[0],), dtype=np.float32)
+            for rr in range(f.shape[0]):
+                mr = mask[rr, :]
+                if not np.any(mr):
+                    continue
+                fr = f[rr, mr]
+                tr = t[rr, mr]
+                a[rr] = float((fr @ tr) / ((tr @ tr) + eps))
+            return a
+
+        def subtract_scaled_template(frame: np.ndarray, template: np.ndarray, mask: np.ndarray, rowwise: bool = False):
+            f = frame.astype(np.float32)
+            t = template.astype(np.float32)
+            if not rowwise:
+                a = estimate_scale_global(f, t, mask)
+                return f - a * t, a
+            else:
+                a_y = estimate_scale_rowwise(f, t, mask)
+                return f - (a_y[:, None] * t), a_y
+
+        def show_img(ax, img, title, cmap="gray", vmin=None, vmax=None):
+            if vmin is None or vmax is None:
+                vmin, vmax = np.percentile(img, [1, 99])
+            ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
+            ax.set_title(title, fontsize=9)
+            ax.axis("off")
+
+        # ==========================
+        # STEP 1: Detect LED events (POSITIVE ONLY)
+        # ==========================
+        print("\n[1/4] Detecting LED events via mean pixel intensity...")
+
+        subsample = max(1, n_frames // 3000)
+        sample_indices = np.arange(0, n_frames, subsample)
+        mean_pixels = np.array([np.mean(self.planes[i]) for i in sample_indices], dtype=np.float32)
+        time_sec = sample_indices / float(self.fr)
+
+        # SIGNED z-score
+        z = stats.zscore(mean_pixels, nan_policy="omit")
+
+        # Positive LED spikes only
+        led_mask = z > outlier_thresh
+
+        # Negative “laser power-up / warmup” outliers (exclude from clean pool)
+        neg_mask = z < -neg_z_exclude
+
+        # Clean pool excludes BOTH led spikes and warmup negatives
+        clean_mask = ~(led_mask | neg_mask)
+
+        outlier_sample_idx = np.where(led_mask)[0]
+        neg_sample_idx = np.where(neg_mask)[0]
+        clean_sample_idx = np.where(clean_mask)[0]
+
+        outlier_frames = sample_indices[outlier_sample_idx]
+        clean_frames = sample_indices[clean_sample_idx]
+
+        print(f"  Total frames: {n_frames} (subsampled to {len(sample_indices)})")
+        print(f"  Detected {len(outlier_frames)} LED frames (z > {outlier_thresh})")
+        print(f"  Excluding {len(neg_sample_idx)} warmup/negative frames (z < -{neg_z_exclude}) from clean pool")
+        print(f"  Clean frames available (for bg/template): {len(clean_frames)}")
+
+        if len(outlier_frames) == 0:
+            print("\n  No positive LED artifacts detected in sampled frames.")
+            return {
+                "n_outliers": 0,
+                "outlier_frames": np.array([]),
+                "clean_frames": clean_frames,
+                "mean_pixels": mean_pixels,
+                "z_scores_signed": z,
+                "time_sec": time_sec,
+                "neg_excluded_frames": sample_indices[neg_sample_idx],
+            }
+
+        if len(clean_frames) == 0:
+            print("\n  WARNING: No clean frames after exclusions. Lower neg_z_exclude or outlier_thresh.")
+            return {
+                "n_outliers": int(len(outlier_frames)),
+                "outlier_frames": outlier_frames,
+                "clean_frames": clean_frames,
+                "mean_pixels": mean_pixels,
+                "z_scores_signed": z,
+                "time_sec": time_sec,
+                "neg_excluded_frames": sample_indices[neg_sample_idx],
+            }
+
+        # ==========================
+        # STEP 2: Select example frames
+        # ==========================
+        print("\n[2/4] Selecting example frames for comparison...")
+
+        # pick baseline as middle clean (stable by construction)
+        baseline_idx = int(clean_frames[len(clean_frames) // 2])
+
+        # pick contaminated example as strongest LED event (not first)
+        contam_idx = int(outlier_frames[np.argmax(z[outlier_sample_idx])])
+
+        # neighbors for interpolation/reference: nearest clean before/after contam
+        frames_before = clean_frames[clean_frames < contam_idx]
+        frames_after = clean_frames[clean_frames > contam_idx]
+        interp_before_idx = int(frames_before[-1]) if len(frames_before) > 0 else max(0, contam_idx - 1)
+        interp_after_idx = int(frames_after[0]) if len(frames_after) > 0 else min(n_frames - 1, contam_idx + 1)
+
+        print(f"  Baseline frame: {baseline_idx}")
+        print(f"  Contaminated (example) frame: {contam_idx}")
+        print(f"  Neighbor clean frames: {interp_before_idx}, {interp_after_idx}")
+
+        # ==========================
+        # STEP 3: Apply correction methods
+        # ==========================
+        print("\n[3/4] Testing correction methods...")
+
+        baseline_orig = self.planes[baseline_idx].astype(np.float32)
+        contam_orig = self.planes[contam_idx].astype(np.float32)
+        before_frame = self.planes[interp_before_idx].astype(np.float32)
+        after_frame = self.planes[interp_after_idx].astype(np.float32)
+
+        # Clean reference for background subtraction (and mask definition)
+        ref_clean = (before_frame + after_frame) / 2.0
+
+        # Method 1: Highpass (preview)
+        baseline_hp = highpass(baseline_orig, sigma_hp)
+        contam_hp = highpass(contam_orig, sigma_hp)
+
+        # Method 2: Interpolation (preview)
+        contam_interp = ref_clean
+
+        # Method 3: Template subtraction (scaled)
+        # Choose top-N LED frames by z (strongest events), and match clean frames in time
+        led_order = np.argsort(z[outlier_sample_idx])[::-1]
+        sel_led_frames = outlier_frames[led_order[: min(template_n, len(outlier_frames))]].astype(int)
+
+        # time-matched clean frames: nearest clean to each LED frame (prevents warmup/drift bias)
+        clean_arr = clean_frames.astype(int)
+        matched_clean = []
+        for lf in sel_led_frames:
+            j = int(np.argmin(np.abs(clean_arr - lf)))
+            matched_clean.append(clean_arr[j])
+        matched_clean = np.array(matched_clean, dtype=int)
+
+        template_contam = np.median(
+            np.stack([self.planes[i].astype(np.float32) for i in sel_led_frames], axis=0),
+            axis=0
+        )
+        template_clean = np.median(
+            np.stack([self.planes[i].astype(np.float32) for i in matched_clean], axis=0),
+            axis=0
+        )
+        led_template = (template_contam - template_clean).astype(np.float32)
+
+        bg_mask = background_mask(ref_clean, keep_frac=bg_keep_frac)
+
+        contam_template_sub, a_contam = subtract_scaled_template(
+            contam_orig, led_template, bg_mask, rowwise=do_rowwise_template_scale
+        )
+        baseline_template_sub, a_base = subtract_scaled_template(
+            baseline_orig, led_template, bg_mask, rowwise=do_rowwise_template_scale
+        )
+
+        # Method 4: Basic background subtraction (scalar + optional row-wise)
+        contam_bg_sub, d_bg = correct_bg_offset(contam_orig, ref_clean, keep_frac=bg_keep_frac)
+        baseline_bg_sub, d_bg_base = correct_bg_offset(baseline_orig, ref_clean, keep_frac=bg_keep_frac)
+
+        if do_rowwise_bg:
+            contam_bg_row, d_bg_row = correct_bg_rowwise(contam_orig, ref_clean, keep_frac=bg_keep_frac)
+            baseline_bg_row, d_bg_row_base = correct_bg_rowwise(baseline_orig, ref_clean, keep_frac=bg_keep_frac)
+        else:
+            contam_bg_row, d_bg_row = None, None
+            baseline_bg_row, d_bg_row_base = None, None
+
+        print(f"  ✓ Highpass (σ={sigma_hp})")
+        print("  ✓ Interpolation (preview)")
+        print(f"  ✓ Scaled template subtraction (n={len(sel_led_frames)}, rowwise_scale={do_rowwise_template_scale})")
+        print(f"  ✓ Background subtraction (keep_frac={bg_keep_frac}, rowwise={do_rowwise_bg})")
+
+        # ==========================
+        # STEP 4: Plot
+        # ==========================
+        print("\n[4/4] Generating comparison figure...")
+
+        n_method_cols = 6 if do_rowwise_bg else 5  # orig + HP + interp + template + bg + (rowwise bg)
+        total_cols = max(4, n_method_cols)
+
+        fig = plt.figure(figsize=(4 * total_cols, 12))
+        gs = GridSpec(4, total_cols, figure=fig, height_ratios=[1.2, 1, 1, 1], hspace=0.3, wspace=0.2)
+
+        # Row 1: trace
+        ax1 = fig.add_subplot(gs[0, :])
+        ax1.plot(time_sec, mean_pixels, "b-", linewidth=0.5, alpha=0.7, label="Mean pixel")
+
+        # LED events (positive)
+        ax1.scatter(time_sec[outlier_sample_idx], mean_pixels[outlier_sample_idx],
+                    c="red", s=30, zorder=5, label=f"LED events (z>{outlier_thresh})")
+
+        # warmup negative excluded frames (for visibility only)
+        if len(neg_sample_idx) > 0:
+            ax1.scatter(time_sec[neg_sample_idx], mean_pixels[neg_sample_idx],
+                        c="orange", s=18, zorder=4, label=f"Warmup excluded (z<-{neg_z_exclude})")
+
+        ax1.axvline(baseline_idx / float(self.fr), color="green", linestyle="--", alpha=0.7, label=f"Baseline ({baseline_idx})")
+        ax1.axvline(contam_idx / float(self.fr), color="red", linestyle="--", alpha=0.7, label=f"Contaminated ({contam_idx})")
+        ax1.set_xlabel("Time (s)")
+        ax1.set_ylabel("Mean intensity")
+        ax1.set_title(f"Mean Pixel Trace: {len(outlier_frames)} LED events detected (sampled)")
+        ax1.legend(loc="upper right")
+        ax1.grid(True, alpha=0.3)
+
+        # Row 2: baseline/contam/diff/template in first 4 cols
+        ax2a = fig.add_subplot(gs[1, 0])
+        show_img(ax2a, baseline_orig, f"BASELINE (frame {baseline_idx})\nOriginal")
+
+        ax2b = fig.add_subplot(gs[1, 1])
+        show_img(ax2b, contam_orig, f"CONTAMINATED (frame {contam_idx})\nOriginal")
+
+        ax2c = fig.add_subplot(gs[1, 2])
+        show_img(ax2c, contam_orig - baseline_orig, "DIFFERENCE\n(Contam - Baseline)")
+
+        ax2d = fig.add_subplot(gs[1, 3])
+        show_img(ax2d, led_template, f"LED TEMPLATE\n(median contam - median clean)\n(n={len(sel_led_frames)})")
+
+        # Row 3: contaminated methods
+        col = 0
+        ax3a = fig.add_subplot(gs[2, col]); col += 1
+        show_img(ax3a, contam_orig, "CONTAMINATED\nOriginal")
+
+        ax3b = fig.add_subplot(gs[2, col]); col += 1
+        show_img(ax3b, contam_hp, f"HIGHPASS (preview)\nσ={sigma_hp}")
+
+        ax3c = fig.add_subplot(gs[2, col]); col += 1
+        show_img(ax3c, contam_interp, "INTERPOLATE (preview)\n(avg clean neighbors)")
+
+        ax3d = fig.add_subplot(gs[2, col]); col += 1
+        a_txt = f"{a_contam:.3f}" if np.isscalar(a_contam) else f"rowwise ({a_contam.min():.2f}..{a_contam.max():.2f})"
+        show_img(ax3d, contam_template_sub, f"TEMPLATE SUB (scaled)\nscale={a_txt}")
+
+        ax3e = fig.add_subplot(gs[2, col]); col += 1
+        show_img(ax3e, contam_bg_sub, f"BG SUB (scalar)\nΔbg={d_bg:.2f}")
+
+        if do_rowwise_bg:
+            ax3f = fig.add_subplot(gs[2, col]); col += 1
+            show_img(ax3f, contam_bg_row, "BG SUB (row-wise)\n(Δ per row)")
+
+        # Row 4: baseline methods
+        col = 0
+        ax4a = fig.add_subplot(gs[3, col]); col += 1
+        show_img(ax4a, baseline_orig, "BASELINE\nOriginal")
+
+        ax4b = fig.add_subplot(gs[3, col]); col += 1
+        show_img(ax4b, baseline_hp, f"BASELINE HP (preview)\nσ={sigma_hp}")
+
+        ax4c = fig.add_subplot(gs[3, col]); col += 1
+        b_before = max(0, baseline_idx - 5)
+        b_after = min(n_frames - 1, baseline_idx + 5)
+        baseline_interp = (self.planes[b_before].astype(np.float32) + self.planes[b_after].astype(np.float32)) / 2.0
+        show_img(ax4c, baseline_interp, "BASELINE Interp (preview)\n(avg ±5 frames)")
+
+        ax4d = fig.add_subplot(gs[3, col]); col += 1
+        a_txt_b = f"{a_base:.3f}" if np.isscalar(a_base) else f"rowwise ({a_base.min():.2f}..{a_base.max():.2f})"
+        show_img(ax4d, baseline_template_sub, f"BASELINE Template Sub\nscale={a_txt_b}")
+
+        ax4e = fig.add_subplot(gs[3, col]); col += 1
+        show_img(ax4e, baseline_bg_sub, f"BASELINE BG Sub\nΔbg={d_bg_base:.2f}")
+
+        if do_rowwise_bg:
+            ax4f = fig.add_subplot(gs[3, col]); col += 1
+            show_img(ax4f, baseline_bg_row, "BASELINE BG Sub (row-wise)")
+
+        plt.tight_layout()
+
+        outpath = os.path.join(self.rootpath, "ledArtifactTest.png")
+        if save_fig:
+            plt.savefig(outpath, dpi=150, bbox_inches="tight")
+            print(f"  Figure saved to: {outpath}")
+        plt.show()
+
+        return {
+            "n_outliers": int(len(outlier_frames)),
+            "outlier_frames": outlier_frames,
+            "neg_excluded_frames": sample_indices[neg_sample_idx],
+            "clean_frames": clean_frames,
+            "mean_pixels": mean_pixels,
+            "z_scores_signed": z,
+            "time_sec": time_sec,
+            "baseline_idx": baseline_idx,
+            "contam_idx": contam_idx,
+            "interp_neighbors": (interp_before_idx, interp_after_idx),
+            "led_template": led_template,
+            "bg_keep_frac": bg_keep_frac,
+            "bg_delta_contam": d_bg,
+            "template_scale_contam": a_contam,
+            "do_rowwise_bg": do_rowwise_bg,
+            "do_rowwise_template_scale": do_rowwise_template_scale,
+        }
+
+    def convert(self, method: str = 'max_proj', chunker: int = 1000, led_artifacts: str = 'y', memmap_write: bool = False, wipe_and_replace: bool = False, preview_upsample: bool = False, test_upsample: bool = False, upsample_small: bool = False):
 
         '''
         Method to convert data
@@ -185,11 +565,11 @@ class RawToTif():
                     'max_proj': maximum projection taken over the z-plane to generate a 3D file (t,y,x)
             
             >>> chunker: how many images to save at once
-            >>> led_artifacts: preset to 'n' but if set to 'y' performs interpolation of led artifact contaminated images
-                                Method of interpolation:
-                                        - First, the time resolved average is taken of each plane, the result is then z-scored and the
-                                        absolute value is used to identify if avg pixel events exceed 7std. 7std was chosen after viewing datasets.
-                                        - Thresholded events are then interpolated using linear interpolation of contaminated frame based on the immediately surrounding images
+            >>> led_artifacts: 'y' or 'n' - whether to perform LED artifact correction
+            >>> led_method: method for LED artifact correction (only used when led_artifacts='y')
+                    'interpolate': Replace contaminated frames with interpolated neighbors [RECOMMENDED]
+                    'highpass': Spatial highpass filtering to remove uniform LED illumination
+                    'template': Subtract average LED pattern from contaminated frames
 
             >>> memmap_write: False. This can be removed. The imwrite method is better and the result is still memory mappable.
 
@@ -206,6 +586,7 @@ class RawToTif():
         # 10/15/2024: Updated mechanism to perform computations in parallel using copilot
         # 12/18/2024: Finished updating the run_parallel mechanism
         # 1/10/2025: Fixed issue with shape. Must have edited the code in dec to handle numpy rather than list and didnt fix .shape attribute
+        # 2/9/2025: Includes capacities to convert 1 plane imaging with LED saturation events being interpolated.
 
         '''
         print("This code does not support multi-channel recordings")
@@ -224,7 +605,7 @@ class RawToTif():
         assert method != '4D', "method=='4D' has not been validated. Please set method='max_proj' or method='suite2p' "
         
         # create a memory mappable file, with vectorized data
-        if '4D' in method:
+        if '4D' in method and self.imgmode == 'multiplane':
 
             code_start = time.process_time()   
             print("method: 4D detected. Your file will be saved with dimensions (z,t,y,x):",z,t,y,x)
@@ -261,14 +642,10 @@ class RawToTif():
                 del np_mem_list
 
         # this is the suite2p method for 4D data
-        elif 'suite2p' in method:
+        elif 'suite2p' in method and self.imgmode == 'multiplane':
 
-            # convert to numpy then save
-            print("Converting array to numpy...")
-            print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")  
-            process_start = time.process_time()   
-            self.planes = np.array(self.planes)
-            print("Time to convert to numpy:",time.process_time() - process_start)
+            # planes is already a numpy array from __init__
+            print(f"Suite2p mode - planes shape: {self.planes.shape}, dtype: {self.planes.dtype}")
             print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")  
 
             # TODO: replace this with boolean
@@ -323,50 +700,9 @@ class RawToTif():
             # convert to numpy then save
             print(f'Writing imgPlaneZ.tif to: {self.fname}')
             tf.imwrite(self.fname, self.planes, dtype=self.planes.dtype, bigtiff=True)
-
-            '''
-            print("method: suite2p detected. Your file will be saved with dimensions (t*z,y,x):",t*z,y,x)
-            print("Please wait while memory mapped file is created...")
-            self.fname = fname_new(self.rootpath,'imgPlaneZ.tif')
-            im = tf.memmap(
-                self.fname,
-                shape=(t*z,y,x),
-                dtype=np.uint16,
-                imagej=True,
-                #append=True
-            )
-            print("File mapped to disk")
-            print(time.process_time() - code_start)
-            print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")            
-
-            # writing data to disk in chunks (500)
-            print("Please wait while data are written to disk using a 'chunking' mechanism...")
-
-            # beautiful thing about python is that if the loop exceeds the samples, python will grab the remaining samples, despite you requesting more than what exists!
-            chunk_samples = int(chunker)
-            chunk_loop = count_range[0::chunk_samples] # skip every chunk_samples samples
-            assert chunk_loop[-1]+chunk_samples > total_count, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
-                        
-            for framesi in chunk_loop:
-                # temporarily load data
-                np_mem_list = []
-                idx_load = self.idx_offset_np[framesi:framesi+chunk_samples]
-                for idxi in idx_load:
-                    np_mem_list.append(np.memmap(self.filepath, dtype='int16', offset=idxi, mode='r', shape=(x,y)))
-                
-                # inversion
-                #np_mem_list = [np.rot90(np.fliplr(i)) for i in np_mem_list]
-
-                # chunky write :) - no need to worry about the remainder bc slicing takes care of it!
-                im[framesi:framesi+chunk_samples,:,:] = np_mem_list
-                im.flush()
-                del im; im=tf.memmap(self.fname) # clean up memory
-                print("Run time for",str(framesi),"/",str(total_count),":",time.process_time() - code_start, "Memory:",str(psutil.virtual_memory()[2]),"<%> RAM utility")
-            #print("Update:",str(psutil.virtual_memory()[2]),"<%> RAM utility")
-            '''
         
         # here is the max projection method that the lab prefers
-        elif 'max_proj' in method:
+        elif 'max_proj' in method and self.imgmode == 'multiplane':
 
             print("method: max_proj detected. Your file will be saved with dimensions (t,y,x):",t,y,x)
             print("Please wait while memory mappable file is created...")
@@ -381,89 +717,23 @@ class RawToTif():
 
             # lets chunk it!
             # beautiful thing about python is that if the loop exceeds the samples, python will grab the remaining samples, despite you requesting more than what exists!
-            #chunker = 1000 # number of samples to save over
             time_loop = list(range(t)); time_chunker = time_loop[0::chunker]
             assert time_loop[-1]+chunker > t, "You will not write all samples! Looping mechanism exceeds the total count of samples! FIX ME!"
 
-            # I fed copilot my simpler code and it spit out a code with better error statements and so I kept that
             # Initialize timing
             process_start = time.process_time()
-            print(f'Parallel processing set to: {run_parallel}')
-            if run_parallel == True:
 
-                # Function to process a chunk
-                def process_chunk(start_idx, chunk_size, planes, stride):
-                    return [(i, planes[i]) for i in range(start_idx, min(start_idx + chunk_size * stride, len(planes)), stride)]
+            # planes is already a numpy array from __init__
+            print(f"Max_proj mode - planes shape: {self.planes.shape}, dtype: {self.planes.dtype}")
 
-                # Assuming planes is already defined
-                total_length = len(self.planes)
-                chunk_size = 1000  # You may adjust this as needed
-                stride = z
-                num_chunks = total_length // stride
+            assert self.planes.shape[0] % z == 0, f'array is improperly divided into frames (not divisible by z={z})'
 
-                # Initialize the output array
-                output_shape = (z, num_chunks, y, x)
-                separated_planes = np.zeros(output_shape, dtype=self.planes[0].dtype)
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() - 2) as executor:
-                    futures = {executor.submit(process_chunk, i + chunk_idx * stride, chunk_size, self.planes, stride): (i, chunk_idx)
-                            for i in range(stride)
-                            for chunk_idx in range(0, num_chunks, chunk_size)}
-
-                    completed_results = []
-
-                    for future in concurrent.futures.as_completed(futures):
-                        i, chunk_idx = futures[future]
-                        chunk = future.result()
-                        if chunk:
-                            completed_results.append((i, chunk_idx, chunk))
-                        progress = (len(completed_results) / len(futures)) * 100
-                        print(f"{progress:.2f}% Completed")
-
-                    # Sort the results to maintain order
-                    completed_results.sort(key=lambda x: (x[1], x[0]))
-
-                    for i, chunk_idx, chunk in completed_results:
-                        for idx, frame in chunk:
-                            plane_idx = idx % stride
-                            chunk_start = (idx - plane_idx) // stride
-                            separated_planes[plane_idx, chunk_start, :, :] = frame
-                print("Time to separate and reshape:",time.process_time() - process_start)
-                print("Shape of the resulting 4D array:", separated_planes.shape)
-
-                # very critical to ensure that the order matches the original data order
-                # assert
-                process_start = time.process_time()
-                plane0=self.planes[0::3]
-                plane1=self.planes[1::3]
-                plane2=self.planes[2::3]
-
-                # randomly test for misaligned frames
-                randTest = np.random.randint(0, separated_planes.shape[1], 1000)
-
-                for ri in randTest:
-                    tempTest0 = plane0[ri]-separated_planes[0,ri,:,:]
-                    tempTest1 = plane1[ri]-separated_planes[1,ri,:,:]
-                    tempTest2 = plane2[ri]-separated_planes[2,ri,:,:]
-                    
-                    assert np.max(tempTest0) == 0 and np.max(tempTest1) == 0 and np.max(tempTest2) == 0 and np.min(tempTest0) == 0 and np.min(tempTest1) == 0 and np.min(tempTest2) == 0, "Misaligned frames"
-                print("Time to check frame sequence:",time.process_time() - process_start,"sec")
-
-            else:
-
-                # convert to numpy
-                print("Converting to numpy. Please wait... BUT If this step is taking too long consider running parallel")
-                self.planes = np.array(self.planes)
-
-                assert self.planes.shape[0] % 3 == 0, 'array is improperly divided into frames'
-
-                # separate planes
-                separated_planes = np.zeros((3, int(self.planes.shape[0]/3), self.planes.shape[1], self.planes.shape[2]), dtype=self.planes.dtype)    
-                print(f'Separating list planes into Z: {separated_planes.shape[0]}, t: {separated_planes.shape[1]}, y: {separated_planes.shape[2]}, x: {separated_planes.shape[3]}')            
-                separated_planes[0, :, :, :] = self.planes[0::3] 
-                separated_planes[1, :, :, :] = self.planes[1::3] 
-                separated_planes[2, :, :, :] = self.planes[2::3]
-                print("Time to convert img data to numpy and separate:",time.process_time() - process_start)
+            # separate planes using numpy slicing (fast, instant)
+            separated_planes = np.zeros((z, int(self.planes.shape[0]/z), self.planes.shape[1], self.planes.shape[2]), dtype=self.planes.dtype)    
+            print(f'Separating planes into Z: {separated_planes.shape[0]}, t: {separated_planes.shape[1]}, y: {separated_planes.shape[2]}, x: {separated_planes.shape[3]}')            
+            for zi in range(z):
+                separated_planes[zi, :, :, :] = self.planes[zi::z]
+            print("Time to separate planes:", time.process_time() - process_start, "sec")
 
             # artifact detection
             if led_artifacts.lower() == 'y':
@@ -523,8 +793,6 @@ class RawToTif():
 
             # save the max-projection image
             print("Writing imaging data to:", self.fname)
-            #im[:] = max_proj[:] # writes full file to disk. Might cause crashing of VScode
-            #im.flush() # write to disk
 
             # mechanisms to write files to disk
             if memmap_write is True:
@@ -541,10 +809,6 @@ class RawToTif():
 
                 # This is an alternative method to write iteratively and is less prone to crashing
                 for framesi in time_chunker:
-                    #temp = []
-                    #for zi in range(z):
-                    #    temp.append(planes[zi][framesi:framesi+chunker])
-                    #max_proj = np.max(np.array(temp),axis=0) # convert to numpy
                     im[framesi:framesi+chunker,:,:] = max_proj[framesi:framesi+chunker,:,:]
                     im.flush() # write to disk
                     del im; im=tf.memmap(self.fname) # clean up memory
@@ -564,6 +828,217 @@ class RawToTif():
             else:
                 # quicker write
                 tf.imwrite(self.fname, max_proj, dtype=max_proj.dtype, bigtiff=True)
+        
+        elif self.imgmode == 'single plane':
+            print("Single plane data detected. Saving as 3D array (t,y,x)")
+            self.fname = fname_new(self.rootpath,'img.tif')
+            
+            # planes is already a numpy array from __init__
+            print(f"Single plane data shape: {self.planes.shape}, dtype: {self.planes.dtype}")
+            
+            # if you have a single plane image and you ran opto, it means the light may have contaminated your image
+            # Supports multiple correction methods based on led_method parameter
+            if led_artifacts.lower() == 'y':
+                from scipy.ndimage import gaussian_filter
+                import scipy.stats as stats
+                
+                process_start = time.process_time()
+                original_dtype = self.planes.dtype
+                n_frames = self.planes.shape[0]
+                y_dim, x_dim = self.planes.shape[1], self.planes.shape[2]
+                
+                # ---- Step 1: Detect contaminated frames ----
+                print("\n[1/3] Detecting LED-contaminated frames...")
+                subsample = max(1, n_frames // 3000)
+                sample_indices = np.arange(0, n_frames, subsample)
+                mean_pixels = np.array([np.mean(self.planes[i]) for i in sample_indices])
+                
+                z_scores = stats.zscore(mean_pixels)  # SIGNED z-scores (not absolute) to detect positive outliers only
+                outlier_thresh = 3.0
+                outlier_mask = z_scores > outlier_thresh  # POSITIVE outliers only (LED artifacts are bright)
+                outlier_sample_idx = np.where(outlier_mask)[0]
+                clean_sample_idx = np.where(~outlier_mask)[0]
+                
+                outlier_frames = sample_indices[outlier_sample_idx]
+                clean_frames = sample_indices[clean_sample_idx]
+                
+                print(f"  Detected {len(outlier_frames)} contaminated frames (z > {outlier_thresh})")
+                print(f"  Clean frames: {len(clean_frames)}")
+                
+                # Store original data for QC
+                qc_sample_frames = [0, n_frames//4, n_frames//2, 3*n_frames//4, n_frames-1]
+                qc_original_frames = {idx: self.planes[idx].copy() for idx in qc_sample_frames}
+                mean_pixels_before = mean_pixels.copy()
+                
+                correction_info = "No LED artifacts detected"
+                if len(outlier_frames) == 0:
+                    print("  No LED artifacts detected. Skipping correction.")
+                else:
+                    # ---- Step 2: Apply correction method ----
+                    print(f"\n[2/3] Applying interpolation correction...")
+                    
+                    # INTERPOLATION: Replace contaminated frames with average of neighbors
+                    n_corrected = 0
+                    for contam_idx in outlier_frames:
+                        contam_idx = int(contam_idx)
+                        
+                        # Find nearest clean frames before and after
+                        before_candidates = clean_frames[clean_frames < contam_idx]
+                        after_candidates = clean_frames[clean_frames > contam_idx]
+                        
+                        if len(before_candidates) > 0 and len(after_candidates) > 0:
+                            before_idx = int(before_candidates[-1])
+                            after_idx = int(after_candidates[0])
+                            # Interpolate as average
+                            self.planes[contam_idx] = ((self.planes[before_idx].astype(np.float32) + 
+                                                        self.planes[after_idx].astype(np.float32)) / 2).astype(original_dtype)
+                            n_corrected += 1
+                        elif len(before_candidates) > 0:
+                            self.planes[contam_idx] = self.planes[int(before_candidates[-1])]
+                            n_corrected += 1
+                        elif len(after_candidates) > 0:
+                            self.planes[contam_idx] = self.planes[int(after_candidates[0])]
+                            n_corrected += 1
+                        
+                        if n_corrected % 20 == 0:
+                            print(f"    Corrected {n_corrected}/{len(outlier_frames)} frames...")
+                    
+                    print(f"  Interpolated {n_corrected} contaminated frames")
+                    correction_info = f"Temporal interpolation: replaced {n_corrected} frames with neighbor averages"
+
+                print(f"\n[3/3] LED artifact correction complete ({time.process_time() - process_start:.1f}s)")
+                
+                # ---- QC Visualization ----
+                print("Generating QC visualization...")
+                
+                # Compute mean pixel after correction
+                mean_pixels_after = np.array([np.mean(self.planes[i]) for i in sample_indices])
+                time_axis = sample_indices / self.fr
+
+                # Save metadata
+                artMat = {
+                    "led_method": "interpolate",
+                    "n_contaminated_frames": len(outlier_frames),
+                    "contaminated_frame_indices": outlier_frames,
+                    "outlier_thresh": outlier_thresh,
+                    "mean_pixels_before": mean_pixels_before,
+                    "mean_pixels_after": mean_pixels_after,
+                    "time_axis_sec": time_axis,
+                    "info": correction_info
+                }
+                artFile = os.path.join(self.rootpath, 'ledArtifactCorrection_interpolate.mat')
+                sio.savemat(artFile, artMat)
+                print(f"Metadata saved to: {artFile}")
+
+            # save img
+            # Upsample small images to 512x512 for proper downstream processing (suite2p)
+            target_size = 512
+            img_height, img_width = self.planes.shape[1], self.planes.shape[2]
+            if upsample_small and (img_height < target_size or img_width < target_size):
+                import cv2
+                from scipy.ndimage import gaussian_filter
+                
+                n_frames = self.planes.shape[0]
+                sigma = 0.7
+                dtype_info = np.iinfo(self.planes.dtype)
+                
+                # --- OPTIONAL PREVIEW ---
+                if preview_upsample:
+                    import matplotlib.pyplot as plt
+                    print(f"\nSmall image detected ({img_height}x{img_width}). Previewing upsampling on sample frames...")
+                    sample_idx = [0, n_frames // 2, n_frames - 1]
+                    
+                    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+                    for col, idx in enumerate(sample_idx):
+                        original_frame = self.planes[idx]
+                        upsampled_frame = cv2.resize(original_frame.astype(np.float32), 
+                                                      (target_size, target_size), 
+                                                      interpolation=cv2.INTER_CUBIC)
+                        upsampled_frame = gaussian_filter(upsampled_frame, sigma=sigma)
+                        upsampled_frame = np.clip(upsampled_frame, dtype_info.min, dtype_info.max)
+                        
+                        axes[0, col].imshow(original_frame, cmap='gray')
+                        axes[0, col].set_title(f'Original frame {idx} ({img_height}x{img_width})')
+                        axes[0, col].axis('off')
+                        
+                        axes[1, col].imshow(upsampled_frame, cmap='gray')
+                        axes[1, col].set_title(f'Upsampled frame {idx} ({target_size}x{target_size})')
+                        axes[1, col].axis('off')
+                    
+                    plt.suptitle('Upsampling Preview')
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(self.rootpath, 'upsampling_preview.png'), dpi=150)
+                    plt.show()
+                    
+                    proceed = input(f"\nProceed with upsampling all {n_frames} frames? (y/n): ").strip().lower()
+                    if proceed != 'y':
+                        print("Upsampling skipped. Saving original resolution.")
+                        tf.imwrite(self.fname, self.planes, dtype=self.planes.dtype, bigtiff=True)
+                        process_end = time.process_time()
+                        print(f"Total time spent converting: {(process_end - code_start)/60:.2f} minutes")
+                        return
+                
+                # --- FULL UPSAMPLING (always runs unless preview aborted) ---
+                if test_upsample:
+                    frames_to_write = min(1000, n_frames)
+                    out_path = os.path.join(self.rootpath, 'img_upsample_test.tif')
+                    print(f"\nTEST MODE: Upsampling {frames_to_write} frames to {out_path}")
+                else:
+                    frames_to_write = n_frames
+                    out_path = self.fname
+                    print(f"\nUpsampling {n_frames} frames from {img_height}x{img_width} to {target_size}x{target_size}...")
+                
+                upsample_start = time.process_time()
+                
+                if test_upsample:
+                    # Test mode: small enough to fit in memory, use proven tf.imwrite
+                    test_array = np.zeros((frames_to_write, target_size, target_size), dtype=self.planes.dtype)
+                    for i in range(frames_to_write):
+                        frame = cv2.resize(self.planes[i].astype(np.float32), 
+                                           (target_size, target_size), 
+                                           interpolation=cv2.INTER_CUBIC)
+                        frame = gaussian_filter(frame, sigma=sigma)
+                        frame = np.clip(frame, dtype_info.min, dtype_info.max)
+                        test_array[i] = frame.astype(self.planes.dtype)
+                        if (i + 1) % 100 == 0:
+                            print(f"  Upsampled {i+1}/{frames_to_write} frames...")
+                    
+                    tf.imwrite(out_path, test_array, bigtiff=True)
+                    print(f"\nTest file saved. Open in Fiji to verify: {out_path}")
+                    print("Re-run with test_upsample=False to process all frames.")
+                    process_end = time.process_time()
+                    print(f"Total time spent converting: {(process_end - code_start)/60:.2f} minutes")
+                    return
+                else:
+                    # Full mode: write in chunks to avoid 163 GB in RAM
+                    chunk_size = 1000
+                    progress_interval = max(1, frames_to_write // 10)
+                    for chunk_start in range(0, frames_to_write, chunk_size):
+                        chunk_end = min(chunk_start + chunk_size, frames_to_write)
+                        chunk_array = np.zeros((chunk_end - chunk_start, target_size, target_size), dtype=self.planes.dtype)
+                        
+                        for j, i in enumerate(range(chunk_start, chunk_end)):
+                            frame = cv2.resize(self.planes[i].astype(np.float32), 
+                                               (target_size, target_size), 
+                                               interpolation=cv2.INTER_CUBIC)
+                            frame = gaussian_filter(frame, sigma=sigma)
+                            frame = np.clip(frame, dtype_info.min, dtype_info.max)
+                            chunk_array[j] = frame.astype(self.planes.dtype)
+                        
+                        # First chunk creates the file, subsequent chunks append
+                        if chunk_start == 0:
+                            tf.imwrite(out_path, chunk_array, dtype=self.planes.dtype, bigtiff=True)
+                        else:
+                            tf.imwrite(out_path, chunk_array, dtype=self.planes.dtype, bigtiff=True, append=True)
+                        
+                        if (chunk_end) % progress_interval == 0 or chunk_end == frames_to_write:
+                            elapsed = (time.process_time() - upsample_start) / 60
+                            print(f"  Upsampled {chunk_end}/{frames_to_write} frames... ({elapsed:.1f} min)")
+                
+                print(f"Upsampling complete: saved {target_size}x{target_size} to {out_path} ({(time.process_time() - upsample_start)/60:.1f} min)")
+            else:
+                tf.imwrite(self.fname, self.planes, dtype=self.planes.dtype, bigtiff=True)
+        
         process_end = time.process_time()
         print(f"Total time spent converting: {(process_end - code_start)/60:.2f} minutes")
 

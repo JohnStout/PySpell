@@ -196,7 +196,7 @@ def constrained_foopsi(fluor, bl=None,  c1=None, g=None,  sn=None, p=None, metho
                 # it is added back in function constrained_foopsi_parallel of temporal.py
                 c -= c1 * g**np.arange(len(fluor))
             elif p == 2:
-                print("Running AR2 model")
+                #print("Running AR2 model")
                 if bl is None:
                     try:
                         c, sp, bl, g, lam = constrained_oasisAR2(
