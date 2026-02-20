@@ -15,6 +15,8 @@ Key improvements over standard CellReg:
 - Builds integrated mouse_data and mouse_table structures
 """
 
+# TODO: Stop using .mat files for spatial footprints. Just load straight from suite2p ops variable/stat variable.
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Union, Any
@@ -1647,10 +1649,8 @@ class CellRegPy:
                     # Transform centroids
                     cents = centroid_locations[i]
                     if len(cents) > 0:
-                        # Apply affine transform to centroid coordinates
-                        coords = np.column_stack([cents[:, 0], cents[:, 1], np.ones(len(cents))])
-                        transformed = (tform.params @ coords.T).T
-                        aligned_centroid_locations[i] = transformed[:, :2]
+                        # NEW (correct for affine + projective)
+                        aligned_centroid_locations[i] = tform(cents_xy)  # expects Nx2 (x,y)
                     else:
                         aligned_centroid_locations[i] = cents
                 else:
@@ -1685,7 +1685,8 @@ class CellRegPy:
              centroid_intersection,
              centroid_best_model,
              centroid_overlap_mse) = compute_centroid_distances_model_custom(
-                data_dist["neighbors_centroid_distances"], number_of_bins, centers_of_bins
+                data_dist["neighbors_centroid_distances"], number_of_bins, centers_of_bins, 
+                microns_per_pixel=cfg.microns_per_pixel
             )
 
             (p_same_given_spatial_correlation,
@@ -1752,67 +1753,70 @@ class CellRegPy:
              registered_correlations,
              non_registered_correlations,
              spatial_correlation_map) = initial_registration_spatial_corr(
-                aligned_spatial_footprints,
+                aligned_fps,
+                aligned_centroid_locations,
                 maximal_distance=max_dist_px,
                 spatial_correlation_threshold=initial_metric_threshold,
             )
             centroid_distance_map = np.zeros_like(spatial_correlation_map)
             registered_distances = np.array([])
             non_registered_distances = np.array([])
-# Cluster / refine mapping
-            cell_to_index_map_opt, registered_cells_centroids, cluster_scores = cluster_cells(
-                cell_to_index_map=cell_to_index_map,
-                all_to_all_p_same=all_to_all_p_same,
-                all_to_all_indexes=data_dist["all_to_all_indexes"],
-                normalized_maximal_distance=max_dist_px,
-                threshold=cfg.p_same_threshold,
-                centroid_locations_corrected=aligned_centroid_locations,
-                registration_approach="Probabilistic",
-                transform_data=False,
-                max_passes=3,
-            )
 
-            # Accuracy estimate (probabilistic)
-            p_same_vec, p_different_vec, accuracy_scores = estimate_registration_accuracy(
-                cell_to_index_map_opt,
-                all_to_all_p_same,
-                data_dist["all_to_all_indexes"],
-                threshold=cfg.p_same_threshold,
-            )
+        # Step 5: Cluster / refine mapping (MATLAB Stage 5)
+        # MATLAB calls cluster_cells for BOTH model types (not just spatial correlation)
+        optimal_cell_to_index_map, registered_cells_centroids, cluster_scores = cluster_cells_matlab(
+            cell_to_index_map,
+            all_to_all_p_same,
+            data_dist["all_to_all_indexes"],
+            max_dist_px,
+            cfg.p_same_threshold,
+            aligned_centroid_locations,
+            registration_approach="Probabilistic",
+            transform_data=False,
+            verbose=True
+        )
 
-            # Replace initial map with optimized map for downstream outputs
-            cell_to_index_map = cell_to_index_map_opt
+        # Accuracy estimate (probabilistic)
+        p_same_vec, p_different_vec, accuracy_scores = estimate_registration_accuracy(
+            optimal_cell_to_index_map,
+            all_to_all_p_same,
+            data_dist["all_to_all_indexes"],
+            threshold=cfg.p_same_threshold,
+        )
 
-            p_same_models = dict(
-                model_used=model_used,
-                number_of_bins=number_of_bins,
-                centers_of_bins=centers_of_bins,
-                p_same_threshold=cfg.p_same_threshold,
-                # Centroid-distance model
-                p_same_given_centroid_distance=p_same_given_centroid_distance,
-                centroid_same_model=centroid_same_model,
-                centroid_different_model=centroid_diff_model,
-                centroid_mixture_model=centroid_mixture_model,
-                centroid_intersection=centroid_intersection,
-                centroid_best_model=centroid_best_model,
-                centroid_overlap_mse=centroid_overlap_mse,
-                # Spatial-correlation model
-                p_same_given_spatial_correlation=p_same_given_spatial_correlation,
-                spatial_same_model=corr_same_model,
-                spatial_different_model=corr_diff_model,
-                spatial_mixture_model=corr_mixture_model,
-                spatial_intersection=corr_intersection,
-                spatial_best_model=corr_best_model,
-                spatial_overlap_mse=corr_overlap_mse,
-                # Clustering outputs
-                registered_cells_centroids=registered_cells_centroids,
-                cluster_scores=cluster_scores,
-                p_same_vec=p_same_vec,
-                p_different_vec=p_different_vec,
-                accuracy_scores=accuracy_scores,
-            )
+        # Replace initial map with optimized map for downstream outputs
+        cell_to_index_map = optimal_cell_to_index_map
 
-        # Step 5: Save results
+        p_same_models = dict(
+            model_used=model_used,
+            number_of_bins=number_of_bins,
+            centers_of_bins=centers_of_bins,
+            p_same_threshold=cfg.p_same_threshold,
+            # Centroid-distance model
+            p_same_given_centroid_distance=p_same_given_centroid_distance,
+            centroid_same_model=centroid_same_model,
+            centroid_different_model=centroid_diff_model,
+            centroid_mixture_model=centroid_mixture_model,
+            centroid_intersection=centroid_intersection,
+            centroid_best_model=centroid_best_model,
+            centroid_overlap_mse=centroid_overlap_mse,
+            # Spatial-correlation model
+            p_same_given_spatial_correlation=p_same_given_spatial_correlation,
+            spatial_same_model=corr_same_model,
+            spatial_different_model=corr_diff_model,
+            spatial_mixture_model=corr_mixture_model,
+            spatial_intersection=corr_intersection,
+            spatial_best_model=corr_best_model,
+            spatial_overlap_mse=corr_overlap_mse,
+            # Clustering outputs
+            registered_cells_centroids=registered_cells_centroids,
+            cluster_scores=cluster_scores,
+            p_same_vec=p_same_vec,
+            p_different_vec=p_different_vec,
+            accuracy_scores=accuracy_scores,
+        )
+
+        # Step 6: Save results
         print("  Saving registration results...")
         
         results = {
@@ -1844,7 +1848,7 @@ class CellRegPy:
         
         # Save as .npy
         np.save(results_dir / 'cell_to_index_map.npy', cell_to_index_map)
-        np.save(results_dir / 'spatial_correlation_map.npy', corr_map)
+        np.save(results_dir / 'spatial_correlation_map.npy', spatial_correlation_map)
         np.save(results_dir / 'registration_results.npy', results)
         
         # Also save as .mat for MATLAB compatibility
@@ -2845,15 +2849,19 @@ def compute_data_distribution(spatial_footprints: List[np.ndarray],
                 
                 # Nearest neighbor (max correlation)
                 if len(corr_vec) > 0:
-                    nn_corrs.append(corr_vec.max())
-                    nn_dists.append(nearby_dists.min())
-                    
-                    # Non-nearest neighbors
-                    if len(corr_vec) > 1:
-                        sorted_indices = np.argsort(nearby_dists)
-                        nnn_corrs.extend(corr_vec[sorted_indices[1:]])
-                        nnn_dists.extend(nearby_dists[sorted_indices[1:]])
-        
+
+                    # pick the nearest neighbor by centroid distance
+                    i_nn = int(np.argmin(nearby_dists))
+
+                    nn_dists.append(float(nearby_dists[i_nn]))
+                    nn_corrs.append(float(corr_vec[i_nn]))
+
+                    # "other neighbors" = all except the NN
+                    mask_other = np.ones(len(nearby_dists), dtype=bool)
+                    mask_other[i_nn] = False
+                    nnn_dists.extend(nearby_dists[mask_other].tolist())
+                    nnn_corrs.extend(corr_vec[mask_other].tolist())
+
         all_to_all_spatial_correlations[n] = sess_corrs
         all_to_all_centroid_distances[n] = sess_dists
         all_to_all_indexes[n] = sess_idxs
@@ -3063,124 +3071,239 @@ def _weighted_beta_fit(x: np.ndarray, w: np.ndarray, eps: float = 1e-6) -> Tuple
     return float(a), float(b)
 
 
+def _matlab_hist(data: np.ndarray, centers: np.ndarray) -> np.ndarray:
+    """Replicate MATLAB's hist(data, centers) behavior.
+    Creates bins centered at each center value, returning one count per center."""
+    centers = np.asarray(centers, dtype=np.float64)
+    if len(centers) < 2:
+        return np.array([len(data)])
+    step = centers[1] - centers[0]
+    edges = np.empty(len(centers) + 1)
+    edges[0] = centers[0] - step / 2
+    for i in range(1, len(centers)):
+        edges[i] = (centers[i - 1] + centers[i]) / 2
+    edges[-1] = centers[-1] + step / 2
+    counts, _ = np.histogram(data, bins=edges)
+    return counts.astype(np.float64)
+
+
+def _estimate_beta_params_nr(assignments: np.ndarray,
+                             data: np.ndarray,
+                             maximal_distance: float = 1.0) -> Tuple[float, float]:
+    """Port of MATLAB estimate_beta_mixture_params.m.
+    Fits beta distribution parameters via Newton-Raphson with
+    digamma/trigamma functions — matches MATLAB exactly."""
+    from scipy.special import psi, polygamma
+
+    w = np.asarray(assignments, dtype=np.float64)
+    x = np.asarray(data, dtype=np.float64)
+    x = np.clip(x, 1e-10, maximal_distance * 0.9999)
+    sw = w.sum()
+    if sw <= 0:
+        return 1.0, 1.0
+
+    # Sufficient statistics (MATLAB lines 11-12)
+    g1 = float(np.sum(w * np.log(x / maximal_distance)) / sw)
+    g2 = float(np.sum(w * np.log((maximal_distance - x) / maximal_distance)) / sw)
+
+    # Moment-matching initialization (MATLAB lines 15-22)
+    sample_mean = float(np.sum(w * x) / sw)
+    sample_var = float(np.sum(w * (x - sample_mean) ** 2) / sw)
+    xbar = sample_mean / maximal_distance
+    ssq = sample_var / (maximal_distance ** 2)
+    if ssq <= 0 or xbar <= 0 or xbar >= 1 or xbar * (1 - xbar) <= ssq:
+        p, q = 1.0, 1.0
+    else:
+        factor = xbar * (1 - xbar) / ssq - 1
+        p = max(xbar * factor, 1e-3)
+        q = max((1 - xbar) * factor, 1e-3)
+
+    # Newton-Raphson (MATLAB lines 26-32)
+    for _ in range(100):
+        try:
+            psi_pq = float(psi(p + q))
+            grad = np.array([psi(p) - psi_pq - g1,
+                             psi(q) - psi_pq - g2])
+            tri_pq = float(polygamma(1, p + q))
+            hess = np.array([[polygamma(1, p) - tri_pq, -tri_pq],
+                             [-tri_pq, polygamma(1, q) - tri_pq]])
+            step_vec = np.linalg.solve(hess, grad)
+            p -= float(step_vec[0])
+            q -= float(step_vec[1])
+            p = max(p, 1e-6)
+            q = max(q, 1e-6)
+        except Exception:
+            break
+
+    return float(p), float(q)
+
+
 def compute_spatial_correlations_model(neighbors_spatial_correlations: np.ndarray,
                                       number_of_bins: int,
                                       centers_of_bins: Tuple[np.ndarray, np.ndarray]
                                       ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, str, float]:
     """
-    Port of MATLAB compute_spatial_correlations_model.m
+    Faithful port of MATLAB compute_spatial_correlations_model.m
 
-    Fits a 2-component mixture in *dissimilarity* space: data = 1 - corr
-    - same-cell component: lognormal on data
-    - different-cell component: beta on data
+    Fits a 2-component mixture in dissimilarity space (data = 1 - corr):
+    - same-cell component: lognormal on (1 - corr)
+    - different-cell component: beta on (1 - corr)
+
+    Uses MATLAB's exact EM algorithm with weighted M-step.
 
     Returns:
-        p_same_given_spatial_correlation (vector at corr bin centers),
-        same_model (pdf at centers),
-        different_model (pdf at centers),
-        mixture_model (pdf at centers),
-        intersection_point (corr value),
-        best_model_string,
-        overlap_mse
+        p_same_given_spatial_correlation, same_model, different_model,
+        mixture_model, intersection_point, best_model_string, overlap_mse
     """
-    from scipy.stats import lognorm, beta
-    from scipy.optimize import minimize
+    from scipy.stats import lognorm as _lognorm, beta as _beta
 
     corr = np.asarray(neighbors_spatial_correlations, dtype=np.float64)
     corr = corr[np.isfinite(corr)]
+    # MATLAB: neighbors_spatial_correlations(neighbors_spatial_correlations<0)=[];
+    #         neighbors_spatial_correlations(neighbors_spatial_correlations>1)=[];
+    corr = corr[(corr >= 0) & (corr <= 1)]
     if corr.size == 0:
         raise ValueError("neighbors_spatial_correlations is empty.")
 
     spatial_correlations_centers = np.asarray(centers_of_bins[1], dtype=np.float64)
 
-    # Histogram (MATLAB-style scaling to a density-like curve)
-    counts, _ = np.histogram(corr, bins=np.r_[spatial_correlations_centers, spatial_correlations_centers[-1] + (spatial_correlations_centers[1]-spatial_correlations_centers[0])])
-    counts = counts.astype(np.float64)
-    if counts.sum() > 0:
-        distribution = counts / (counts.sum() + 1e-12)
-        distribution = distribution / (distribution.max() + 1e-12)
-        distribution = distribution * number_of_bins / (spatial_correlations_centers[-1] - spatial_correlations_centers[0] + 1e-12)
-    else:
-        distribution = counts
-
-    # Work in dissimilarity space
+    # MATLAB: data = 1 - neighbors_spatial_correlations
     data = 1.0 - corr
-    data = data[np.isfinite(data)]
-    data = np.clip(data, 1e-6, 1 - 1e-6)
+    data = np.clip(data, 1e-10, 1 - 1e-10)
 
-    # Initial parameters (MATLAB logic)
-    p = 0.05
-    # same: lognormal fit to low dissimilarity (high corr)
-    try:
-        x0 = data[corr >= 0.7]
-        x0 = x0[(x0 > 0) & np.isfinite(x0)]
-        if x0.size < 50:
-            raise RuntimeError("Not enough points for logn init.")
-        # scipy lognorm parameterization: s=sigma, scale=exp(mu)
-        mu0 = np.mean(np.log(x0))
-        sg0 = np.std(np.log(x0)) + 1e-6
-    except Exception:
-        mu0, sg0 = -4.0, 0.5
+    # ---- normalization denominator (MATLAB style) ----
+    step = spatial_correlations_centers[1] - spatial_correlations_centers[0]
+    rng  = spatial_correlations_centers[-1] - spatial_correlations_centers[0]
+    norm_denom = step + rng
 
-    # different: beta init (MATLAB used betafit on corr<0.75; we do it on data for consistency)
-    try:
-        x1 = data[corr < 0.75]
-        if x1.size < 50:
-            raise RuntimeError("Not enough points for beta init.")
-        a0, b0 = _weighted_beta_fit(x1, np.ones_like(x1))
-    except Exception:
-        a0, b0 = 1.0, 10.0
-
-    # EM
-    mu, sg = float(mu0), float(sg0)
-    a, b = float(a0), float(b0)
-
-    def same_pdf(x, mu_, sg_):
-        # lognorm in scipy: shape=sg, scale=exp(mu)
-        return lognorm.pdf(x, s=max(1e-6, sg_), scale=np.exp(mu_))
-
-    def diff_pdf(x, a_, b_):
-        return beta.pdf(x, a=max(1e-6, a_), b=max(1e-6, b_))
-
-    for _ in range(200):
-        sp = p * same_pdf(data, mu, sg)
-        dp = (1 - p) * diff_pdf(data, a, b)
-        denom = sp + dp + 1e-12
-        assign = sp / denom  # responsibility for "same"
-
-        # M-step
-        p = float(np.clip(assign.mean(), 1e-6, 1 - 1e-6))
-
-        # Update lognormal from high-responsibility points (MATLAB uses >0.99)
-        sel = assign > 0.99
-        if sel.sum() >= 50:
-            x = data[sel]
-            mu = float(np.mean(np.log(x)))
-            sg = float(np.std(np.log(x)) + 1e-6)
-
-        # Update beta from weighted fit on "different" responsibilities
-        w = 1 - assign
-        a, b = _weighted_beta_fit(data, w)
-
-    # Evaluate models back on correlation centers via x = 1 - corr_center
-    x_cent = np.clip(1.0 - spatial_correlations_centers, 1e-6, 1 - 1e-6)
-    same_model = same_pdf(x_cent, mu, sg)
-    different_model = diff_pdf(x_cent, a, b)
-    mixture_model = p * same_model + (1 - p) * different_model
-
-    p_same_given_spatial_correlation = (p * same_model) / (mixture_model + 1e-12)
-
-    # Intersection point search (MATLAB: restrict centers between 0.1 and 0.8)
-    mask = (spatial_correlations_centers > 0.1) & (spatial_correlations_centers < 0.8)
-    if mask.any():
-        idx = np.argmin(np.abs(p * same_model[mask] - (1 - p) * different_model[mask]))
-        intersection_point = float(spatial_correlations_centers[mask][idx])
+    # ---- lognormal init from high-correlation data (MATLAB line 32) ----
+    hi = data[corr >= 0.7]
+    if hi.size >= 5:
+        mu = float(np.mean(np.log(hi)))
+        sigma = float(max(np.std(np.log(hi), ddof=0), 1e-6))
     else:
-        intersection_point = float(spatial_correlations_centers[np.argmin(np.abs(p * same_model - (1 - p) * different_model))])
+        mu, sigma = -4.0, 0.5
 
-    overlap_mse = float(np.mean((distribution - mixture_model) ** 2))
+    # ---- beta init from low-correlation data (MATLAB line 34) ----
+    # MATLAB: betafit(neighbors_spatial_correlations(neighbors_spatial_correlations<0.75))
+    # betafit fits from corr values; then beta is applied to data=1-corr in EM.
+    # Use Newton-Raphson matching MATLAB betafit:
+    lo_corr = corr[corr < 0.75]
+    lo_corr = np.clip(lo_corr, 1e-6, 1 - 1e-6)
+    if lo_corr.size >= 5:
+        p_beta, q_beta = _estimate_beta_params_nr(
+            np.ones(lo_corr.size), lo_corr, maximal_distance=1.0)
+    else:
+        p_beta, q_beta = 1.0, 10.0
 
-    best_model_string = f"p={p:.3f}, logn(mu={mu:.3f},sigma={sg:.3f}), beta(a={a:.3f},b={b:.3f})"
+    # MATLAB: PIsame = 0.5
+    PIsame = 0.5
+
+    # ---- EM Algorithm (MATLAB lines 39-57) ----
+    for _ in range(100):
+        # E-step
+        same_eval = _lognorm.pdf(data, s=max(sigma, 1e-6), scale=np.exp(mu))
+        diff_eval = _beta.pdf(data, a=max(p_beta, 1e-6), b=max(q_beta, 1e-6))
+        numer = PIsame * same_eval
+        denom_em = numer + (1 - PIsame) * diff_eval + 1e-12
+        assignments = numer / denom_em
+
+        # M-step (MATLAB weighted formulas, lines 47-53)
+        sum_assign = float(np.sum(assignments))
+        if sum_assign > 0:
+            PIsame = sum_assign / len(assignments)
+            mu = float(np.sum(assignments * np.log(data)) / sum_assign)
+            sigma = float(np.sqrt(
+                np.sum(assignments * (np.log(data) - mu) ** 2) / sum_assign))
+            sigma = max(sigma, 1e-6)
+
+        # Beta M-step: MATLAB's estimate_beta_mixture_params (Newton-Raphson)
+        p_beta, q_beta = _estimate_beta_params_nr(
+            1 - assignments, data, maximal_distance=1.0)
+
+    # ---- Evaluate models on correlation centers (MATLAB lines 55-56) ----
+    x_cent = np.clip(1.0 - spatial_correlations_centers, 1e-10, 1 - 1e-10)
+    same_model = _lognorm.pdf(x_cent, s=max(sigma, 1e-6), scale=np.exp(mu))
+    different_model = _beta.pdf(x_cent, a=max(p_beta, 1e-6), b=max(q_beta, 1e-6))
+
+    # ---- Normalize models (MATLAB lines 90-91) ----
+    def _norm_pdf(pdf):
+        s = pdf.sum()
+        if s > 0:
+            return pdf / s * (number_of_bins / norm_denom)
+        return pdf
+
+    same_model = _norm_pdf(same_model)
+    different_model = _norm_pdf(different_model)
+
+    # ---- Swap check: same_model must peak at HIGH correlation ----
+    # If EM converged with swapped labels, fix it.
+    same_peak_corr = float(spatial_correlations_centers[np.argmax(same_model)])
+    diff_peak_corr = float(spatial_correlations_centers[np.argmax(different_model)])
+    if same_peak_corr < diff_peak_corr:
+        same_model, different_model = different_model, same_model
+        PIsame = 1.0 - PIsame
+
+    # ---- Sigmoid smoothing on same_model (MATLAB lines 95-98) ----
+    def _sigmoid(x, a_, c_):
+        return 1.0 / (1.0 + np.exp(-a_ * (x - c_)))
+
+    smoothing = _sigmoid(spatial_correlations_centers,
+                         20.0,
+                         float(spatial_correlations_centers.min()) + 0.5)
+    same_model = same_model * smoothing
+    step_10 = max(1, round(number_of_bins / 10))
+    same_model[::step_10] = 0
+
+    # ---- Weighted sum (MATLAB line 102) ----
+    mixture_model = PIsame * same_model + (1 - PIsame) * different_model
+
+    # ---- Histogram distribution (MATLAB line 106-107) ----
+    counts = _matlab_hist(corr, spatial_correlations_centers)
+    total = max(counts.sum(), 1.0)
+    distribution = counts / total * (number_of_bins / norm_denom)
+
+    # ---- MSE (MATLAB line 110) ----
+    overlap_mse = float(np.sum(np.abs(
+        (distribution - mixture_model) * norm_denom / number_of_bins)) / 2)
+
+    # ---- p_same(corr) (MATLAB lines 114-123) ----
+    p_same_given_spatial_correlation = (PIsame * same_model) / (
+        PIsame * same_model + (1 - PIsame) * different_model + 1e-12)
+
+    # Sigmoid smoothing on p_same at low-same-model region (MATLAB lines 120-123)
+    minimal_p_same_threshold = 0.001
+    low_mask = same_model < minimal_p_same_threshold * max(same_model.max(), 1e-12)
+    indexes_to_smooth = np.where(low_mask)[0]
+    if indexes_to_smooth.size > 0:
+        n_smooth = indexes_to_smooth.size
+        smooth_x = np.arange(1, n_smooth + 1, dtype=np.float64)
+        smooth_func = _sigmoid(smooth_x, 0.05 * n_smooth, 0.8 * n_smooth)
+        p_same_given_spatial_correlation[indexes_to_smooth] *= smooth_func
+
+    # ---- Intersection (MATLAB lines 126-134) ----
+    above_thresh = np.where(
+        same_model > minimal_p_same_threshold * max(same_model.max(), 1e-12))[0]
+    if above_thresh.size > 1:
+        search_range = above_thresh[:-1]  # MATLAB: index_range_of_intersection(end)=[]
+        diffs = np.abs(PIsame * same_model[search_range] -
+                       (1 - PIsame) * different_model[search_range])
+        ii = int(np.argmin(diffs))
+        intersection_point = round(
+            spatial_correlations_centers[search_range[ii]] * 100) / 100
+    else:
+        # Fallback: search full range
+        mask = (spatial_correlations_centers > 0.1) & (spatial_correlations_centers < 0.8)
+        if mask.any():
+            diffs = np.abs(PIsame * same_model[mask] -
+                           (1 - PIsame) * different_model[mask])
+            ii = int(np.argmin(diffs))
+            intersection_point = float(spatial_correlations_centers[mask][ii])
+        else:
+            intersection_point = 0.5
+
+    best_model_string = (f"p={PIsame:.3f}, logn(mu={mu:.3f},sigma={sigma:.3f}), "
+                         f"beta(a={p_beta:.3f},b={q_beta:.3f})")
     return (p_same_given_spatial_correlation,
             same_model,
             different_model,
@@ -3192,122 +3315,145 @@ def compute_spatial_correlations_model(neighbors_spatial_correlations: np.ndarra
 
 def compute_centroid_distances_model_custom(neighbors_centroid_distances: np.ndarray,
                                            number_of_bins: int,
-                                           centers_of_bins: Tuple[np.ndarray, np.ndarray]
+                                           centers_of_bins: Tuple[np.ndarray, np.ndarray],
+                                           microns_per_pixel: float = 1.0,
                                            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, str, float]:
     """
-    Port of MATLAB compute_centroid_distances_model_custom.m
+    Faithful port of MATLAB compute_centroid_distances_model_custom.m
 
-    Fits distance distribution (in pixels):
-    - same-cell component: lognormal on distance
-    - different-cell component: parametric shape b*x/(1+exp(-c*(x-d)))
+    Fits distance distribution in **microns**:
+    - same-cell component: lognormal PDF
+    - different-cell component: b*x / (1 + exp(-a*(x - c)))
+
+    Uses joint 6-parameter fit [p, mu, sigma, a, c, b] via least_squares,
+    matching MATLAB's lsqcurvefit approach.
 
     Returns:
-        p_same_given_centroid_distance (vector at distance bin centers),
-        same_model (pdf at centers),
-        different_model (pdf at centers),
-        mixture_model (pdf at centers),
-        intersection_point (distance),
-        best_model_string,
-        overlap_mse
+        p_same_given_centroid_distance, same_model, different_model,
+        mixture_model, intersection_point, best_model_string, overlap_mse
     """
-    from scipy.stats import lognorm
-    from scipy.optimize import least_squares
+    from scipy.stats import lognorm as _lognorm
+    from scipy.optimize import curve_fit as _curve_fit
 
     d = np.asarray(neighbors_centroid_distances, dtype=np.float64)
     d = d[np.isfinite(d)]
     if d.size == 0:
         raise ValueError("neighbors_centroid_distances is empty.")
 
-    centroid_centers = np.asarray(centers_of_bins[0], dtype=np.float64)
+    centers = np.asarray(centers_of_bins[0], dtype=np.float64)  # pixels
+    mpp = float(microns_per_pixel)
+    xdata = mpp * centers                                        # microns
+    xdata[xdata <= 0] = np.finfo(float).eps
 
-    # Histogram scaling (MATLAB style)
-    counts, _ = np.histogram(d, bins=np.r_[centroid_centers, centroid_centers[-1] + (centroid_centers[1]-centroid_centers[0])])
-    counts = counts.astype(np.float64)
-    if counts.sum() > 0:
-        distribution = counts / (counts.sum() + 1e-12)
-        distribution = distribution / (distribution.max() + 1e-12)
-        distribution = distribution * number_of_bins / (centroid_centers[-1] - centroid_centers[0] + 1e-12)
-    else:
-        distribution = counts
+    # ---- histogram (MATLAB-style: hist(d, centers)) ----
+    counts = _matlab_hist(d, centers)
+    step  = mpp * (centers[1] - centers[0])
+    rng   = mpp * (centers[-1] - centers[0])
+    denom = step + rng
+    total = max(counts.sum(), 1.0)
+    distribution = counts / total * (number_of_bins / denom)
 
-    # initial p and lognormal fit for low distances
-    p = 0.05
-    # lognormal init from distances < 8 (MATLAB)
-    try:
-        x0 = d[d < 8]
-        x0 = x0[(x0 > 0) & np.isfinite(x0)]
-        if x0.size < 50:
-            raise RuntimeError("Not enough points for logn init.")
-        mu0 = np.mean(np.log(x0))
-        sg0 = np.std(np.log(x0)) + 1e-6
-    except Exception:
-        mu0, sg0 = 0.0, 0.3
+    # ---- initial parameters (MATLAB lines 19-51) ----
+    max_fit_um = 9.0
 
-    mu, sg = float(mu0), float(sg0)
+    d_px = d
 
-    # Define components
-    def same_pdf(x, mu_, sg_):
-        return lognorm.pdf(x, s=max(1e-6, sg_), scale=np.exp(mu_))
+    # MATLAB: sel = microns_per_pixel*neighbors_centroid_distances < max_fit_um & ... > 0;
+    #         d_fit = neighbors_centroid_distances(sel);  <-- pixel space!
+    #         ph = lognfit(d_fit);  <-- lognfit on PIXELS
+    sel = (mpp * d_px < max_fit_um) & (d_px > 0)
+    d_fit = d_px[sel]
+    if d_fit.size < 10:
+        d_fit = d_px[d_px > 0]
 
-    def diff_shape(x, b_, c_, d_):
-        return b_ * x / (1.0 + np.exp(-c_ * (x - d_)))
-
-    # Fit different-cell shape to the "tail" (dist > 3) using least squares vs histogram
-    # MATLAB used lsqcurvefit with bounds and start [0.07,0.1,10]
-    xfit = centroid_centers
-    yfit = distribution
-
-    def resid(par):
-        b_, c_, d_ = par
-        return diff_shape(xfit, b_, c_, d_) - yfit
-
-    par0 = np.array([0.07, 0.1, 10.0], dtype=np.float64)
-    lb = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    ub = np.array([1.0, 100.0, 100.0], dtype=np.float64)
-    res = least_squares(resid, par0, bounds=(lb, ub), max_nfev=2000)
-    b, c, d0 = res.x
-
-    # EM-like refinement (MATLAB ran 100 iter)
-    x_data = np.clip(d, 1e-6, None)
-
-    for _ in range(100):
-        sp = p * same_pdf(x_data, mu, sg)
-        dp = (1 - p) * diff_shape(x_data, b, c, d0)
-        denom = sp + dp + 1e-12
-        assign = sp / denom
-        p = float(np.clip(assign.mean(), 1e-6, 1 - 1e-6))
-
-        sel = assign > 0.99
-        if sel.sum() >= 50:
-            x = x_data[sel]
-            mu = float(np.mean(np.log(x)))
-            sg = float(np.std(np.log(x)) + 1e-6)
-
-        # Refit b,c,d with weights for "different" (1-assign) in histogram space
-        w = 1 - assign
-        # weighted target distribution: use weighted histogram
-        # (approximation; MATLAB refits on histogram via lsqcurvefit without weights)
+    if d_fit.size > 0:
         try:
-            res = least_squares(resid, np.array([b, c, d0]), bounds=(lb, ub), max_nfev=500)
-            b, c, d0 = res.x
+            # MATLAB lognfit returns MLE [mu, sigma] with ddof=1
+            mu0 = float(np.mean(np.log(d_fit)))
+            sg0 = float(max(np.std(np.log(d_fit), ddof=1), 1e-3))
         except Exception:
-            pass
-
-    same_model = same_pdf(centroid_centers, mu, sg)
-    different_model = diff_shape(centroid_centers, b, c, d0)
-    mixture_model = p * same_model + (1 - p) * different_model
-    p_same_given_centroid_distance = (p * same_model) / (mixture_model + 1e-12)
-
-    # intersection point
-    mask = (centroid_centers > 2) & (centroid_centers < 12)
-    if mask.any():
-        idx = np.argmin(np.abs(p * same_model[mask] - (1 - p) * different_model[mask]))
-        intersection_point = float(centroid_centers[mask][idx])
+            mu0, sg0 = float(np.log(np.mean(xdata[xdata > 0]))), 0.5
     else:
-        intersection_point = float(centroid_centers[np.argmin(np.abs(p * same_model - (1 - p) * different_model))])
+        mu0, sg0 = float(np.log(np.mean(xdata[xdata > 0]))), 0.5
+    p0 = min(max(d_fit.size / max(d_px.size, 1), 0.05), 0.95)
 
-    overlap_mse = float(np.mean((distribution - mixture_model) ** 2))
-    best_model_string = f"p={p:.3f}, logn(mu={mu:.3f},sigma={sg:.3f}), diff(b={b:.3f},c={c:.3f},d={d0:.3f})"
+    # diff-shape initial guess
+    mid = max(1, number_of_bins // 2)
+    den_init = mpp * (centers[-1] - centers[mid]) + np.finfo(float).eps
+    b0 = (distribution[-1] - distribution[mid]) / den_init
+    b0 = max(b0 / (1 - p0), 1e-6)
+    a0 = 1.0
+    c0 = max(float(np.median(xdata)), 1.0)
+
+    x0_vec = [p0, mu0, sg0, a0, c0, b0]
+
+    # ---- mixture model function (MATLAB line 59-61) ----
+    # curve_fit signature: f(xdata, *params) -> ydata
+    def _mixture(xd, p_, mu_, sg_, a_, c_, b_):
+        sg_ = max(sg_, 1e-6)
+        same = (1.0 / (xd * sg_ * np.sqrt(2 * np.pi))) * np.exp(
+            -(np.log(xd) - mu_) ** 2 / (2 * sg_ ** 2))
+        diff = b_ * xd / (1.0 + np.exp(-a_ * (xd - c_)))
+        return p_ * same + (1 - p_) * diff
+
+    # ---- joint fit (MATLAB lsqcurvefit with Levenberg-Marquardt) ----
+    # MATLAB uses 'levenberg-marquardt' which ignores bounds.
+    # Use scipy curve_fit with method='lm' (no bounds) to match.
+    try:
+        popt, _ = _curve_fit(_mixture, xdata, distribution, p0=x0_vec,
+                             method='lm', maxfev=20000)
+        p, mu, sg, a, c, b = popt
+    except Exception:
+        # Fallback to TRF with bounds if LM fails
+        from scipy.optimize import least_squares as _ls
+        lb = np.array([0.0, -np.inf, 1e-6, 0.0, 0.0, 0.0])
+        ub = np.array([1.0,  np.inf, 10.0, 1e3, np.max(xdata) * 10, np.inf])
+        def _resid(par):
+            return _mixture(xdata, *par) - distribution
+        res = _ls(_resid, x0_vec, bounds=(lb, ub), method='trf',
+                  max_nfev=20000, ftol=1e-8, xtol=1e-8)
+        p, mu, sg, a, c, b = res.x
+    # Clamp p to [0,1] and sg > 0 since LM doesn't enforce bounds
+    p = float(np.clip(p, 0.0, 1.0))
+    sg = max(sg, 1e-6)
+
+    # ---- component PDFs (individually normalized like MATLAB lines 79-87) ----
+    same_raw = _lognorm.pdf(xdata, s=sg, scale=np.exp(mu))
+    diff_raw = b * xdata / (1.0 + np.exp(-a * (xdata - c)))
+
+    def _norm_pdf(pdf):
+        s = pdf.sum()
+        if s > 0:
+            return pdf / s * (number_of_bins / denom)
+        return pdf
+
+    same_model = _norm_pdf(same_raw)
+    different_model = _norm_pdf(diff_raw)
+    mixture_model = p * same_model + (1 - p) * different_model
+
+
+    # ---- p_same(d) ----
+    p_same_given_centroid_distance = (p * same_model) / (
+        p * same_model + (1 - p) * different_model + 1e-12)
+    if len(p_same_given_centroid_distance) >= 2:
+        p_same_given_centroid_distance[0] = p_same_given_centroid_distance[1]
+
+    # ---- intersection (MATLAB lines 93-96) ----
+    idx_rng = np.where((centers > 1.0 / mpp) & (centers < 10.0 / mpp))[0]
+    if idx_rng.size > 0:
+        diffs = np.abs(p * same_model[idx_rng] - (1 - p) * different_model[idx_rng])
+        ii = int(np.argmin(diffs))
+        intersection_point = round(mpp * centers[idx_rng[ii]] * 100) / 100
+    else:
+        intersection_point = float(
+            mpp * centers[np.argmin(np.abs(p * same_model - (1 - p) * different_model))])
+
+    # ---- MSE (MATLAB line 99-101) ----
+    overlap_mse = float(np.sum(np.abs(
+        (distribution - mixture_model) * denom / number_of_bins)) / 2)
+
+    best_model_string = (f"p={p:.3f}, logn(mu={mu:.3f},sigma={sg:.3f}), "
+                         f"diff(a={a:.3f},c={c:.3f},b={b:.3f})")
     return (p_same_given_centroid_distance,
             same_model,
             different_model,
@@ -3435,12 +3581,364 @@ def estimate_registration_accuracy(cell_to_index_map: np.ndarray,
     return p_same_vec, p_diff_vec, scores
 
 
-def _transform_distance_to_similarity(x: np.ndarray, max_dist: float) -> np.ndarray:
-    x = np.asarray(x, dtype=np.float64)
-    sim = (max_dist - x) / (max_dist + 1e-12)
-    return np.clip(sim, 0.0, 1.0)
+import numpy as np
+
+def transform_distance_to_similarity(measured_distance: float, maximal_distance: float) -> float:
+    return (maximal_distance - measured_distance) / maximal_distance
 
 
+def compute_scores_matlab(cell_to_index_map: np.ndarray,
+                          all_to_all_indexes,
+                          all_to_all_p_same,
+                          number_of_sessions: int):
+    """
+    Faithful port of CellReg compute_scores.m
+    """
+    n_clusters = cell_to_index_map.shape[0]
+    cell_scores = np.full(n_clusters, np.nan, dtype=float)
+    cell_scores_positive = np.full(n_clusters, np.nan, dtype=float)
+    cell_scores_negative = np.full(n_clusters, np.nan, dtype=float)
+    cell_scores_exclusive = np.full(n_clusters, np.nan, dtype=float)
+
+    p_same_registered_pairs = []
+    for _ in range(n_clusters):
+        p_same_registered_pairs.append(np.full((number_of_sessions, number_of_sessions), np.nan, dtype=float))
+
+    def _get_candidates(sess_a, cell_a_1idx, sess_b):
+        if cell_a_1idx <= 0:
+            return None, None
+        cand = all_to_all_indexes[sess_a][cell_a_1idx - 1][sess_b]
+        ps = all_to_all_p_same[sess_a][cell_a_1idx - 1][sess_b]
+        if cand is None or ps is None:
+            return None, None
+        cand = np.asarray(cand, dtype=int).ravel()
+        ps = np.asarray(ps, dtype=float).ravel()
+        return cand, ps
+
+    for n in range(n_clusters):
+        good_pairs = 0.0
+        good_pairs_positive = 0.0
+        good_pairs_negative = 0.0
+        good_pairs_exclusive = 0.0
+
+        num_comp = 0
+        num_comp_pos = 0
+        num_comp_neg = 0
+
+        cells_in_cluster = cell_to_index_map[n, :]
+
+        for m in range(number_of_sessions):
+            for k in range(number_of_sessions):
+                if k == m:
+                    continue
+                if cells_in_cluster[m] <= 0:
+                    continue
+
+                this_cell = int(cell_to_index_map[n, m])
+                num_comp += 1
+
+                cand, ps = _get_candidates(m, this_cell, k)
+
+                if cell_to_index_map[n, k] == 0:
+                    # active-inactive (negative)
+                    num_comp_neg += 1
+                    if cand is None or ps is None or ps.size == 0:
+                        good_pairs += 1.0
+                        good_pairs_negative += 1.0
+                    else:
+                        good_pairs += 1.0 - float(np.sum(ps))
+                        good_pairs_negative += 1.0 - float(np.sum(ps))
+
+                else:
+                    # active-active (positive)
+                    num_comp_pos += 1
+                    clustered_cell = int(cell_to_index_map[n, k])
+
+                    temp_true_positive = 0.0
+                    if cand is not None and ps is not None and ps.size > 0:
+                        hit = np.where(cand == clustered_cell)[0]
+                        if hit.size > 0:
+                            temp_true_positive = float(ps[hit[0]])
+                            p_same_registered_pairs[n][m, k] = temp_true_positive
+                            # remove clustered entry
+                            ps_rest = np.delete(ps, hit[0])
+                        else:
+                            ps_rest = ps
+                    else:
+                        ps_rest = np.array([], dtype=float)
+
+                    good_pairs_positive += temp_true_positive
+
+                    if ps_rest.size == 0:
+                        good_pairs += temp_true_positive
+                        good_pairs_exclusive += 1.0
+                    else:
+                        good_pairs += temp_true_positive - float(np.sum(ps_rest))
+                        good_pairs_exclusive += 1.0 - float(np.sum(ps_rest))
+
+        if num_comp_pos > 0:
+            cell_scores_positive[n] = good_pairs_positive / num_comp_pos
+            cell_scores_exclusive[n] = good_pairs_exclusive / num_comp_pos
+
+        if num_comp_neg > 0:
+            cell_scores_negative[n] = good_pairs_negative / num_comp_neg
+
+        if num_comp > 0:
+            cell_scores[n] = good_pairs / num_comp
+
+    return cell_scores, cell_scores_positive, cell_scores_negative, cell_scores_exclusive, p_same_registered_pairs
+
+
+def cluster_cells_matlab(cell_to_index_map: np.ndarray,
+                         all_to_all_p_same,
+                         all_to_all_indexes,
+                         maximal_distance: float,
+                         registration_threshold: float,
+                         centroid_locations,
+                         registration_approach: str = "Probabilistic",
+                         transform_data: bool = False,
+                         maximal_number_of_iterations: int = 10,
+                         num_changes_thresh: int = 10,
+                         decision_type: str = "Maximal similarity",
+                         verbose: bool = True):
+    """
+    Faithful port of CellReg cluster_cells.m (split/switch/move/delete/merge).
+    centroid_locations: list of arrays (n_cells,2) per session, in same units as maximal_distance.
+    """
+    cluster_distance_threshold = 1.7 * maximal_distance
+    number_of_sessions = len(centroid_locations)
+
+    cmap = np.array(cell_to_index_map, dtype=int, copy=True)
+
+    def _cluster_centroids(cmap_local):
+        ncl = cmap_local.shape[0]
+        cc = np.zeros((ncl, 2), dtype=float)
+        for i in range(ncl):
+            cells = cmap_local[i, :]
+            sess = np.where(cells > 0)[0]
+            if sess.size == 0:
+                cc[i, :] = 1e9
+                continue
+            pts = np.vstack([centroid_locations[s][cells[s] - 1, :] for s in sess])
+            cc[i, :] = pts.mean(axis=0)
+        return cc
+
+    def _similarity(sess_a, cell_a_1idx, sess_b, cell_b_1idx):
+        if cell_a_1idx <= 0 or cell_b_1idx <= 0:
+            return None
+        cand = all_to_all_indexes[sess_a][cell_a_1idx - 1][sess_b]
+        ps = all_to_all_p_same[sess_a][cell_a_1idx - 1][sess_b]
+        if cand is None or ps is None:
+            return None
+        cand = np.asarray(cand, dtype=int).ravel()
+        ps = np.asarray(ps, dtype=float).ravel()
+        hit = np.where(cand == cell_b_1idx)[0]
+        if hit.size == 0:
+            return None
+        val = float(ps[hit[0]])
+        if transform_data:
+            return transform_distance_to_similarity(val, maximal_distance)
+        return val
+
+    changes_history = []
+
+    if verbose:
+        print("Clustering cells (MATLAB-faithful)...")
+
+    for it in range(maximal_number_of_iterations):
+        changes = 0
+
+        num_clusters = cmap.shape[0]
+        clusters_centroids = _cluster_centroids(cmap)
+
+        # reassignment / split / switch
+        for n in range(number_of_sessions):
+            cluster_ind = np.where(cmap[:, n] > 0)[0]
+            num_cells = cluster_ind.size
+
+            for kk in range(num_cells):
+                orig_cluster = int(cluster_ind[kk])
+                this_cell = int(cmap[orig_cluster, n])
+                if this_cell <= 0:
+                    continue
+
+                this_centroid = centroid_locations[n][this_cell - 1, :]
+                dvec = np.sqrt(np.sum((clusters_centroids - this_centroid) ** 2, axis=1))
+                clusters_to_check = np.where(dvec < cluster_distance_threshold)[0]
+                if clusters_to_check.size == 0:
+                    clusters_to_check = np.array([orig_cluster], dtype=int)
+
+                num_candidates = clusters_to_check.size
+                total_similarity = np.zeros(num_candidates, dtype=float)
+                norm_factor = np.zeros(num_candidates, dtype=float)
+                max_in_cluster = np.zeros(num_candidates, dtype=float)
+                min_in_cluster = np.ones(num_candidates, dtype=float)
+
+                for ci, cl in enumerate(clusters_to_check):
+                    cells_in_cl = cmap[cl, :]
+                    sess_in_cl = np.where(cells_in_cl > 0)[0]
+                    sess_in_cl = sess_in_cl[sess_in_cl != n]
+
+                    if sess_in_cl.size == 0:
+                        min_in_cluster[ci] = 0.0
+                        continue
+
+                    for s2 in sess_in_cl:
+                        in_cluster_cell = int(cmap[cl, s2])
+                        sim = _similarity(n, this_cell, s2, in_cluster_cell)
+                        if sim is None:
+                            min_in_cluster[ci] = 0.0
+                        else:
+                            total_similarity[ci] += sim
+                            norm_factor[ci] += 1
+                            max_in_cluster[ci] = max(max_in_cluster[ci], sim)
+                            min_in_cluster[ci] = min(min_in_cluster[ci], sim)
+
+                if decision_type == "Minimal dissimilarity":
+                    max_sim = float(np.max(min_in_cluster))
+                    max_idx = int(np.argmax(min_in_cluster))
+                elif decision_type == "Average similarity":
+                    normed = np.divide(total_similarity, norm_factor, out=np.zeros_like(total_similarity), where=norm_factor > 0)
+                    max_sim = float(np.max(normed))
+                    max_idx = int(np.argmax(normed))
+                else:  # "Maximal similarity"
+                    max_sim = float(np.max(max_in_cluster))
+                    max_idx = int(np.argmax(max_in_cluster))
+
+                best_cluster = int(clusters_to_check[max_idx])
+                best_cells = cmap[best_cluster, :]
+                best_sess = np.where(best_cells > 0)[0]
+                best_sess = best_sess[best_sess != n]
+
+                if best_sess.size == 0:
+                    continue
+
+                original_cells = cmap[orig_cluster, :]
+                num_in_original = int(np.sum(original_cells > 0))
+
+                average_similarity = max_sim  # MATLAB for Maximal/Minimal paths
+
+                # split
+                if average_similarity < registration_threshold and num_in_original > 1:
+                    cmap = np.vstack([cmap, np.zeros((1, number_of_sessions), dtype=int)])
+                    cmap[-1, n] = this_cell
+                    cmap[orig_cluster, n] = 0
+                    clusters_centroids = np.vstack([clusters_centroids, this_centroid.reshape(1, 2)])
+                    changes += 1
+                    continue
+
+                # move/switch
+                if average_similarity >= registration_threshold:
+                    if best_cluster != orig_cluster:
+                        # does best_cluster already contain a cell from session n?
+                        if cmap[best_cluster, n] > 0:
+                            temp_cell = int(cmap[best_cluster, n])
+                            temp_similarity = 0.0
+                            # MATLAB sums similarities for the temp_cell
+                            temp_cells = cmap[best_cluster, :]
+                            temp_sess = np.where(temp_cells > 0)[0]
+                            temp_sess = temp_sess[temp_sess != n]
+                            for s2 in temp_sess:
+                                in_cluster_cell = int(cmap[best_cluster, s2])
+                                sim = _similarity(n, temp_cell, s2, in_cluster_cell)
+                                if sim is not None:
+                                    temp_similarity += sim
+
+                            if max_sim > temp_similarity:
+                                cmap = np.vstack([cmap, np.zeros((1, number_of_sessions), dtype=int)])
+                                cmap[best_cluster, n] = this_cell
+                                cmap[-1, n] = temp_cell
+                                cmap[orig_cluster, n] = 0
+                                clusters_centroids = np.vstack([clusters_centroids,
+                                                                centroid_locations[n][temp_cell - 1, :].reshape(1, 2)])
+                                changes += 1
+                        else:
+                            cmap[orig_cluster, n] = 0
+                            cmap[best_cluster, n] = this_cell
+                            changes += 1
+
+        # delete empties
+        before = cmap.shape[0]
+        cmap = cmap[np.sum(cmap, axis=1) > 0, :]
+        if cmap.shape[0] != before:
+            changes += (before - cmap.shape[0])
+
+        # merge step (MATLAB: Maximal similarity criterion by default)
+        cmap_temp = cmap.copy()
+        num_clusters = cmap_temp.shape[0]
+        clusters_centroids = _cluster_centroids(cmap_temp)
+
+        for i in range(num_clusters):
+            this_cells = cmap_temp[i, :]
+            this_sess = np.where(this_cells > 0)[0]
+            if this_sess.size == 0:
+                continue
+
+            dvec = np.sqrt(np.sum((clusters_centroids - clusters_centroids[i, :]) ** 2, axis=1))
+            candidates = np.where(dvec < cluster_distance_threshold)[0]
+            candidates = candidates[candidates != i]
+
+            for j in candidates:
+                cand_cells = cmap_temp[j, :]
+                cand_sess = np.where(cand_cells > 0)[0]
+                if cand_sess.size == 0:
+                    continue
+
+                # only if no overlapping sessions
+                if np.intersect1d(this_sess, cand_sess).size != 0:
+                    continue
+
+                # compute all_to_all_temp similarities
+                sims = []
+                for sa in this_sess:
+                    ca = int(this_cells[sa])
+                    for sb in cand_sess:
+                        cb = int(cand_cells[sb])
+                        sim = _similarity(sa, ca, sb, cb)
+                        if sim is not None:
+                            sims.append(sim)
+
+                if len(sims) == 0:
+                    continue
+
+                if decision_type == "Maximal similarity":
+                    if float(np.max(sims)) > registration_threshold:
+                        cmap_temp[i, cand_sess] = cmap_temp[j, cand_sess]
+                        cmap_temp[j, :] = 0
+                        clusters_centroids[j, :] = 1e9
+                        changes += 1
+
+        cmap = cmap_temp
+        before = cmap.shape[0]
+        cmap = cmap[np.sum(cmap, axis=1) > 0, :]
+        if cmap.shape[0] != before:
+            changes += (before - cmap.shape[0])
+
+        changes_history.append(changes)
+        if verbose:
+            print(f"  iter {it+1}: changes={changes}, clusters={cmap.shape[0]}")
+
+        if it > 0 and changes <= num_changes_thresh:
+            break
+
+    clusters_centroids = _cluster_centroids(cmap)
+
+    cluster_scores = {}
+    if registration_approach == "Probabilistic":
+        scores = compute_scores_matlab(cmap, all_to_all_indexes, all_to_all_p_same, number_of_sessions)
+        cluster_scores = {
+            "cell_scores": scores[0],
+            "cell_scores_positive": scores[1],
+            "cell_scores_negative": scores[2],
+            "cell_scores_exclusive": scores[3],
+            "p_same_registered_pairs": scores[4],
+            "changes_history": changes_history,
+        }
+
+    return cmap, clusters_centroids, cluster_scores
+
+
+# -- OLD -- #
 def cluster_cells(cell_to_index_map: np.ndarray,
                   all_to_all_p_same: List,
                   all_to_all_indexes: List,

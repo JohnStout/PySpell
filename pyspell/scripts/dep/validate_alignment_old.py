@@ -1183,14 +1183,16 @@ def validate_full_pipeline(folder_path):
 
 
 if __name__ == "__main__":
+
     # USER CONFIGURATION
     target_folder = r"C:\Users\johnj\SpellmanLab Dropbox\OtherData\Manuscripts\in prep\L6CTopto_panneuronal_experiment\data\subjects_superalignment\L612_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN"
+    target_folder = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\Manuscripts\in prep\L6CTopto_panneuronal_experiment\data\subjects_superalignment\L612_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN"
     
     # --- TOGGLE MODES ---
-    RUN_MEAN_ALIGNMENT_CHECK = False   # Original: checks mean image correlations
-    RUN_CELL_OVERLAP_CHECK   = False   # Original: checks footprint overlap
-    RUN_STEP_BY_STEP_ALIGN   = False   # Part A: step-by-step alignment validation
-    RUN_STEP_BY_STEP_MODEL   = False   # Part B: step-by-step modeling validation
+    RUN_MEAN_ALIGNMENT_CHECK = True   # Original: checks mean image correlations
+    RUN_CELL_OVERLAP_CHECK   = True   # Original: checks footprint overlap
+    RUN_STEP_BY_STEP_ALIGN   = True   # Part A: step-by-step alignment validation
+    RUN_STEP_BY_STEP_MODEL   = True   # Part B: step-by-step modeling validation
     RUN_FULL_PIPELINE        = True    # Part C: full multi-session pipeline validation
     
     print(f"Target: {target_folder}\n")

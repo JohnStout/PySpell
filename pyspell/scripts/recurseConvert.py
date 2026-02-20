@@ -133,7 +133,6 @@ REFERENCES:
     CellRegPy
         * Stout and Spellman improved CellReg processing and converted to cellregpy
 
-TODO: ISSUE WITH CODE JUST RERUNNING REGISTRATION FOR SUITE2P
 """
 
 # load modules
