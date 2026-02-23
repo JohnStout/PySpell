@@ -198,9 +198,9 @@ if __name__ == '__main__':
     # recursive method
     imgpaths = dict()
     imgpaths = [
-        {'Folder': r"Z:\John\Subjects - GCaMP Recordings", 'rerunOASIS': False, 'saveBehInFall':False},
-        {'Folder': r"Z:\Alex", 'rerunOASIS': False, 'saveBehInFall':False},
-        {'Folder': r"Z:\Peyton", 'rerunOASIS': False, 'saveBehInFall':False},
+        {'Folder': r"Z:\John\Subjects - GCaMP Recordings"},
+        {'Folder': r"Z:\Alex"},
+        {'Folder': r"Z:\Peyton"},
         ]
 
     # ---------------DEFINE FOLDERS ABOVE----------------------------------------- #
@@ -232,7 +232,7 @@ if __name__ == '__main__':
         if 'rerunOASIS' not in i:
             i['rerunOASIS'] = False
         if 'saveBehInFall' not in i:
-            i['saveBehInFall'] = True
+            i['saveBehInFall'] = False
             print("Default saveBehInFall==True for", i)
 
     # don't run in parallel bc thorfuns.RawToTif.convert('max_proj') uses parallel computing

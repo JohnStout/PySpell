@@ -54,12 +54,17 @@ from cellregpy import (
 
 # ---- Matplotlib setup ----
 import matplotlib
-try:
-    matplotlib.use('TkAgg')
-except Exception:
-    pass  # backend already set (e.g. in IPython)
+# Set INLINE_PLOTS = True to render in VS Code interactive window;
+# False for pop-out TkAgg windows.
+INLINE_PLOTS = True
+if not INLINE_PLOTS:
+    try:
+        matplotlib.use('TkAgg')
+    except Exception:
+        pass
 import matplotlib.pyplot as plt
-plt.ion()  # interactive mode — figures display as they are created
+if not INLINE_PLOTS:
+    plt.ion()  # interactive mode — figures display as they are created
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -235,12 +240,16 @@ def session_names_to_labels(session_names, N):
     return labels[:N]
 
 
-def savefig_both(fig, out_base, *, dpi=200, also_pdf=False):
-    if out_base is None: return
-    os.makedirs(os.path.dirname(out_base), exist_ok=True)
-    fig.savefig(out_base + ".png", dpi=dpi, bbox_inches="tight")
-    if also_pdf:
-        fig.savefig(out_base + ".pdf", bbox_inches="tight")
+def savefig_both(fig, out_base, *, dpi=200, also_pdf=False, show=False):
+    if out_base is not None:
+        os.makedirs(os.path.dirname(out_base) or '.', exist_ok=True)
+        fig.savefig(out_base + ".png", dpi=dpi, bbox_inches="tight")
+        if also_pdf:
+            fig.savefig(out_base + ".pdf", bbox_inches="tight")
+    if INLINE_PLOTS:
+        plt.show()
+    elif not show:
+        plt.close(fig)
 
 
 # ============================================================================ #
@@ -269,8 +278,8 @@ def plot_session_projections(footprints_projections, out_dir, show=False, also_p
             axes_flat[i].set_title(f'Session {i + 1}', fontsize=14, fontweight='bold')
         else:
             axes_flat[i].axis('off')
-    savefig_both(fig, os.path.join(out_dir, "Stage 1 - spatial footprints projections"), also_pdf=also_pdf)
-    if not show:
+    savefig_both(fig, os.path.join(out_dir, "Stage 1 - spatial footprints projections"), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show:
         plt.close(fig)
 
 
@@ -334,8 +343,8 @@ def validate_alignment_deck(
         ax[0,1].imshow(make_rgb_overlay(mean_images_l[ref], mean_s_aligned)); ax[0,1].set_title("Mean Images ALIGNED"); ax[0,1].axis("off")
         ax[1,0].imshow(make_rgb_overlay(fp_ref_raw, fp_s_raw)); ax[1,0].set_title("Footprints RAW"); ax[1,0].axis("off")
         ax[1,1].imshow(make_rgb_overlay(fp_ref_aligned, fp_s_aligned)); ax[1,1].set_title("Footprints ALIGNED"); ax[1,1].axis("off")
-        savefig_both(fig2, os.path.join(out_dir, f"Validation_Panel_Ref{ref+1}_vs_Sess{s+1}"), also_pdf=also_pdf)
-        if not show: plt.close(fig2)
+        savefig_both(fig2, os.path.join(out_dir, f"Validation_Panel_Ref{ref+1}_vs_Sess{s+1}"), also_pdf=also_pdf, show=show)
+        if not INLINE_PLOTS and not show: plt.close(fig2)
 
 
 def plot_x_y_displacements(
@@ -400,8 +409,8 @@ def plot_x_y_displacements(
     cax.set_xlim(0, 1); cax.set_ylim(0, 1); cax.set_xticks([]); cax.set_yticks([])
     cax.text(3.5, 0.5, 'Number of cell-pairs (log)', fontsize=14, fontweight='bold', rotation=90, ha='center', va='center', transform=cax.transAxes)
 
-    savefig_both(fig, os.path.join(out_dir, "Stage 3 - (x,y) displacements"), also_pdf=also_pdf)
-    if not show: plt.close(fig)
+    savefig_both(fig, os.path.join(out_dir, "Stage 3 - (x,y) displacements"), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show: plt.close(fig)
 
 
 def plot_models(
@@ -470,14 +479,31 @@ def plot_models(
     ax_m = axes[1, 0]
     p_same = float(centroid_distances_model_parameters[0])
     bw_full = (x_dist[1] - x_dist[0]) if number_of_bins > 1 else 1.0
-    ax_m.bar(x_dist, centroid_distances_distribution, width=bw_full, color='b', edgecolor='none')
+    ax_m.bar(x_dist, centroid_distances_distribution, width=bw_full, color='b', edgecolor='none', label='Observed data')
+    # Plot same/diff first, then overall, then same/diff AGAIN on top (MATLAB does this)
+    ax_m.plot(x_dist, p_same * centroid_distances_model_same_cells, '--', color='g', linewidth=3, label='Same cell model')
+    ax_m.plot(x_dist, (1 - p_same) * centroid_distances_model_different_cells, '--', color='r', linewidth=3, label='Different cells model')
+    ax_m.plot(x_dist, centroid_distances_model_weighted_sum, '-', color='k', linewidth=3, label='Overall model')
+    # Re-plot on top so dashed lines are visible over the solid black
     ax_m.plot(x_dist, p_same * centroid_distances_model_same_cells, '--', color='g', linewidth=3)
     ax_m.plot(x_dist, (1 - p_same) * centroid_distances_model_different_cells, '--', color='r', linewidth=3)
-    ax_m.plot(x_dist, centroid_distances_model_weighted_sum, '-', color='k', linewidth=3)
     if centroid_distance_intersection is not None and np.isfinite(centroid_distance_intersection):
         ci = float(centroid_distance_intersection)
         ymax_d = float(np.max(centroid_distances_distribution)) if len(centroid_distances_distribution) else 1
         ax_m.plot([ci, ci], [0, ymax_d], '--', color='k', linewidth=2)
+        # Percentage annotations (MATLAB lines 915-922)
+        norm_same = centroid_distances_model_same_cells / max(centroid_distances_model_same_cells.sum(), 1e-12)
+        norm_diff = centroid_distances_model_different_cells / max(centroid_distances_model_different_cells.sum(), 1e-12)
+        same_above = float(norm_same[x_dist > ci].sum())
+        diff_above = float(norm_diff[x_dist > ci].sum())
+        ax_m.text(ci + 1, 0.9 * ymax_d, f'{round(100 * same_above)}%',
+                  fontsize=14, fontweight='bold', ha='center', color='g')
+        ax_m.text(ci - 1, 0.9 * ymax_d, f'{round(100 * (1 - same_above))}%',
+                  fontsize=14, fontweight='bold', ha='center', color='g')
+        ax_m.text(ci + 1, 0.8 * ymax_d, f'{round(100 * diff_above)}%',
+                  fontsize=14, fontweight='bold', ha='center', color='r')
+        ax_m.text(ci - 1, 0.8 * ymax_d, f'{round(100 * (1 - diff_above))}%',
+                  fontsize=14, fontweight='bold', ha='center', color='r')
     ax_m.set_xlim(0, microns_per_pixel * maximal_distance)
     ax_m.set_xlabel('Centroids distance (µm)', fontweight='bold', fontsize=14)
     ax_m.set_ylabel('Probability density', fontweight='bold', fontsize=14)
@@ -487,23 +513,40 @@ def plot_models(
         ax_ms = axes[1, 1]
         p_same_s = float(spatial_correlations_model_parameters[0])
         bw_full_c = (x_corr[1] - x_corr[0]) if n_bins_c > 1 else 0.05
-        ax_ms.bar(x_corr, spatial_correlations_distribution, width=bw_full_c, color='b', edgecolor='none')
+        ax_ms.bar(x_corr, spatial_correlations_distribution, width=bw_full_c, color='b', edgecolor='none', label='Observed data')
+        ax_ms.plot(x_corr, p_same_s * spatial_correlations_model_same_cells, '--', color='g', linewidth=3, label='Same cell model')
+        ax_ms.plot(x_corr, (1-p_same_s) * spatial_correlations_model_different_cells, '--', color='r', linewidth=3, label='Different cells model')
+        ax_ms.plot(x_corr, spatial_correlations_model_weighted_sum, '-', color='k', linewidth=3, label='Overall model')
+        # Re-plot on top
         ax_ms.plot(x_corr, p_same_s * spatial_correlations_model_same_cells, '--', color='g', linewidth=3)
         ax_ms.plot(x_corr, (1-p_same_s) * spatial_correlations_model_different_cells, '--', color='r', linewidth=3)
-        ax_ms.plot(x_corr, spatial_correlations_model_weighted_sum, '-', color='k', linewidth=3)
         if spatial_correlation_intersection is not None and np.isfinite(spatial_correlation_intersection):
             sci = float(spatial_correlation_intersection)
             ymax_s = float(np.max(spatial_correlations_distribution)) if len(spatial_correlations_distribution) else 1
             ax_ms.plot([sci, sci], [0, ymax_s], '--', color='k', linewidth=2)
+            # Percentage annotations (MATLAB lines 884-891)
+            norm_same_s = spatial_correlations_model_same_cells / max(spatial_correlations_model_same_cells.sum(), 1e-12)
+            norm_diff_s = spatial_correlations_model_different_cells / max(spatial_correlations_model_different_cells.sum(), 1e-12)
+            same_above_s = float(norm_same_s[x_corr > sci].sum())
+            diff_above_s = float(norm_diff_s[x_corr > sci].sum())
+            ax_ms.text(sci + 0.1, 0.9 * ymax_s, f'{round(100 * same_above_s)}%',
+                       fontsize=14, fontweight='bold', ha='center', color='g')
+            ax_ms.text(sci - 0.1, 0.9 * ymax_s, f'{round(100 * (1 - same_above_s))}%',
+                       fontsize=14, fontweight='bold', ha='center', color='g')
+            ax_ms.text(sci + 0.1, 0.8 * ymax_s, f'{round(100 * diff_above_s)}%',
+                       fontsize=14, fontweight='bold', ha='center', color='r')
+            ax_ms.text(sci - 0.1, 0.8 * ymax_s, f'{round(100 * (1 - diff_above_s))}%',
+                       fontsize=14, fontweight='bold', ha='center', color='r')
         ax_ms.set_xlim(0, 1)
         ax_ms.set_xlabel('Spatial correlation', fontweight='bold', fontsize=14)
         ax_ms.set_ylabel('Probability density', fontweight='bold', fontsize=14)
-        ax_ms.legend(['Observed data', 'Same cell model', 'Different cells model', 'Overall model'], loc='upper left', frameon=False)
+        ax_ms.legend(loc='upper left', frameon=False)
     else:
         axes[1, 1].axis('off')
 
-    savefig_both(fig, os.path.join(out_dir, "Stage 3 - model"), also_pdf=also_pdf)
-    if not show: plt.close(fig)
+    savefig_both(fig, os.path.join(out_dir, "Stage 3 - model"), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show:
+        plt.close(fig)
 
 
 def plot_cell_scores(
@@ -547,8 +590,8 @@ def plot_cell_scores(
     _score_panel(fig, [0.6, 0.58, sx2, sy2], [0.68, 0.73, sx2/3, sy2/3], cell_scores_positive, 'True positive scores', show_title=True)
     _score_panel(fig, [0.12, 0.1, sx2, sy2], [0.2, 0.25, sx2/3, sy2/3], cell_scores_exclusive, 'Exclusivity cell scores')
     _score_panel(fig, [0.6, 0.1, sx2, sy2], [0.68, 0.25, sx2/3, sy2/3], cell_scores, 'Overall cell scores')
-    savefig_both(fig, os.path.join(out_dir, "Stage 5 - cell scores"), also_pdf=also_pdf)
-    if not show: plt.close(fig)
+    savefig_both(fig, os.path.join(out_dir, "Stage 5 - cell scores"), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show: plt.close(fig)
 
     # P_same pairs plot
     if p_same_registered_pairs is not None:
@@ -588,8 +631,8 @@ def plot_cell_scores(
             ax2_in.set_yticks(xtk3); ax2_in.set_yticklabels([f'{v:.1f}' for v in xtk3], fontsize=14, fontweight='bold')
             ax2_in.set_xlabel('P$_{same}$', fontsize=14, fontweight='bold')
             ax2_in.set_ylabel('Cum. fraction', fontsize=14, fontweight='bold')
-            savefig_both(fig2, os.path.join(out_dir, "Stage 5 - Registered pairs P_same"), also_pdf=also_pdf)
-            if not show: plt.close(fig2)
+            savefig_both(fig2, os.path.join(out_dir, "Stage 5 - Registered pairs P_same"), also_pdf=also_pdf, show=show)
+            if not INLINE_PLOTS and not show: plt.close(fig2)
 
 
 def plot_all_registered_projections(
@@ -664,8 +707,8 @@ def plot_all_registered_projections(
         else:
             axes_flat[i].axis('off')
     fname = f"{stage_label} - projections - {'initial' if '4' in stage_label else 'final'} registration"
-    savefig_both(fig, os.path.join(out_dir, fname), also_pdf=also_pdf)
-    if not show: plt.close(fig)
+    savefig_both(fig, os.path.join(out_dir, fname), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show: plt.close(fig)
 
 
 def plot_init_registration(
@@ -701,8 +744,8 @@ def plot_init_registration(
         ax.set_xlabel('Centroids distance (µm)', fontweight='bold', fontsize=14)
     ax.set_ylabel('Number of cell-pairs', fontweight='bold', fontsize=14)
     ax.tick_params(labelsize=14); ax.legend(loc='upper left', frameon=False)
-    savefig_both(fig, os.path.join(out_dir, "Stage 4 - same versus different cells"), also_pdf=also_pdf)
-    if not show: plt.close(fig)
+    savefig_both(fig, os.path.join(out_dir, "Stage 4 - same versus different cells"), also_pdf=also_pdf, show=show)
+    if not INLINE_PLOTS and not show: plt.close(fig)
     plot_all_registered_projections(spatial_footprints, cell_to_index_map, out_dir, show=show, also_pdf=also_pdf, stage_label="Stage 4")
 
 
@@ -710,7 +753,8 @@ def plot_init_registration(
 #                           CONFIGURATION                                      #
 # ============================================================================ #
 # ---- Set your folder path here (same as MATLAB validate_alignment.m) ----
-folder_path = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\Manuscripts\in prep\L6CTopto_panneuronal_experiment\data\subjects_superalignment\L612_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN"
+#folder_path = r"C:\Users\spell\SpellmanLab Dropbox\OtherData\Manuscripts\in prep\L6CTopto_panneuronal_experiment\data\subjects_superalignment\L612_F_RightPFC_L6Chr_PFCgcamp6f_L6PAN"
+folder_path = r"Z:\John\Subjects - GCaMP Recordings\L613_F_LeftPFC_L6Chrimson_PFCgcamp8f_Panrec"
 
 # ---- Parameters (matching batchRunCellReg_ULTIMATE.m lines 102-131) ----
 microns_per_pixel = 2
@@ -727,6 +771,7 @@ alignable_threshold = 0.3             # minimum mean-image correlation to attemp
 # ---- Display / save options ----
 SHOW_FIGURES = True                   # True = display figures in real time
 SAVE_FIGURES = True                   # True = save PNGs to disk
+# NOTE: INLINE_PLOTS is set near top of file (line ~59)
 # ============================================================================ #
 
 
@@ -878,8 +923,8 @@ def plot_pairwise_session_overlap(
                 ax.set_ylabel(f'Session {i+1}', fontsize=13, fontweight='bold')
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    savefig_both(fig, os.path.join(out_dir, "Stage 5 - pairwise session overlap"))
-    if not show:
+    savefig_both(fig, os.path.join(out_dir, "Stage 5 - pairwise session overlap"), show=show)
+    if not INLINE_PLOTS and not show:
         plt.close(fig)
 
 
@@ -1101,6 +1146,13 @@ def run_pipeline(folder_path: str):
         microns_per_pixel=microns_per_pixel,
     )
     p_centroid = _extract_p_from_model_string(centroid_best_str)
+    print(f"  [DEBUG centroid] best_str = {centroid_best_str}")
+    print(f"  [DEBUG centroid] p_centroid = {p_centroid}")
+    print(f"  [DEBUG centroid] same_model  range: [{centroid_same_model.min():.6f}, {centroid_same_model.max():.6f}]")
+    print(f"  [DEBUG centroid] diff_model  range: [{centroid_diff_model.min():.6f}, {centroid_diff_model.max():.6f}]")
+    print(f"  [DEBUG centroid] mixture     range: [{centroid_mixture_model.min():.6f}, {centroid_mixture_model.max():.6f}]")
+    print(f"  [DEBUG centroid] p*same      range: [{(p_centroid*centroid_same_model).min():.6f}, {(p_centroid*centroid_same_model).max():.6f}]")
+    print(f"  [DEBUG centroid] (1-p)*diff  range: [{((1-p_centroid)*centroid_diff_model).min():.6f}, {((1-p_centroid)*centroid_diff_model).max():.6f}]")
 
     # Spatial correlations model
     (p_same_given_spatial_correlation,
